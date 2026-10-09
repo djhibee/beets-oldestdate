@@ -70,7 +70,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
             'album': RELEASE,  # Approach for standard albums
             'compilation': RECORDING,  # Approach for compilations
             'album_type': {},  # Approach by album type, e.g. {soundtrack: release}. Takes priority
-            'prompt_for': [],  # Approaches for which found dates must be validated, e.g. [recording, work]
+            'prompt_for': [],  # Approaches for which to ask whether an item/album must be processed, e.g. [work]
             'release_types': None,  # Filter by release status, e.g. ['Official']
             'use_file_date': False,  # Also use file's embedded date when looking for oldest date
             'max_network_retries': 3  # Maximum amount of times a given network call will be retried
@@ -318,20 +318,22 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
             self._process_items(task.imported_items())
 
     def _process_items(self, items: Iterable[Item], forced_approach: Optional[str] = None) -> None:
-        """Find oldest dates for a group of items (an album or a singleton), validate them if needed and apply"""
-        results = []
+        """Process a group of items (an album or a singleton).
+        If the approach is listed in prompt_for, first ask whether the group must be processed."""
+        by_approach: Dict[str, List[Item]] = {}
         for item in items:
-            result = self._find_date(item, forced_approach)
-            if result is not None:
-                results.append((item, result[0], result[1]))
+            if self._should_process(item):
+                by_approach.setdefault(forced_approach or self._get_approach(item), []).append(item)
 
         prompt_for = self._prompt_for()
-        to_validate = [result for result in results if result[1] in prompt_for]
-        if to_validate and not self._validate(to_validate):
-            results = [result for result in results if result[1] not in prompt_for]
-
-        for item, approach, oldest_date in results:
-            self._apply_date(item, oldest_date, approach)
+        for approach, approach_items in by_approach.items():
+            if approach in prompt_for and not self._confirm(approach_items, approach):
+                self._log.info('Skipping {0} item(s) as requested ({1} approach)', len(approach_items), approach)
+                continue
+            for item in approach_items:
+                oldest_date = self._find_date(item, approach)
+                if oldest_date is not None:
+                    self._apply_date(item, oldest_date, approach)
 
     def _process_file(self, item: Item, forced_approach: Optional[str] = None) -> None:
         self._process_items([item], forced_approach)
@@ -342,37 +344,34 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
             value = [value]
         return [normalize_approach(approach) for approach in value]
 
-    def _validate(self, results: List[Tuple[Item, str, DateWrapper]]) -> bool:
-        """Ask the user to validate found dates. Return whether they must be applied"""
+    def _confirm(self, items: List[Item], approach: str) -> bool:
+        """Ask the user whether the items (album or singleton) must be processed with given approach"""
         if config['import']['quiet'].get(bool):
             return True
-        print('Oldest dates found by oldestdate:')
-        for item, approach, oldest_date in results:
-            print('  {} - {}: {} -> {} ({} approach)'.format(
-                item.artist, item.title, self._format_item_date(item), format_date(oldest_date), approach))
-        sel = ui.input_options(('Apply', 'Skip'))
-        return bool(sel == 'a')
+        first = items[0]
+        if first.album_id is not None:
+            description = 'album {} - {} ({} track(s))'.format(first.albumartist or first.artist, first.album,
+                                                               len(items))
+        else:
+            description = 'track {} - {}'.format(first.artist, first.title)
+        print('oldestdate: process {} using the {} approach?'.format(description, approach))
+        sel = ui.input_options(('Yes', 'No'))
+        return bool(sel == 'y')
 
-    @staticmethod
-    def _format_item_date(item: Item) -> str:
-        if not item.year:
-            return 'no date'
-        return format_date(DateWrapper(item.year, item.month or None, item.day or None))
-
-    def _find_date(self, item: Item, forced_approach: Optional[str] = None) -> Optional[Tuple[str, DateWrapper]]:
-        """Find oldest date of an item, returns used approach and date"""
+    def _should_process(self, item: Item) -> bool:
+        """Whether the item can and must be processed"""
         if not item.mb_trackid or item.data_source != 'MusicBrainz':
             self._log.info('Skipping track with no mb_trackid: {0.artist} - {0.title}', item)
-            return None
+            return False
 
         # Check for the recording_year and if it exists and not empty skips the track (if force is not True)
         if 'recording_year' in item and item.recording_year and not self.config['force']:
             self._log.info('Skipping already processed track: {0.artist} - {0.title}', item)
-            return None
+            return False
+        return True
 
-        approach = forced_approach or self._get_approach(item)
-
-        # Get oldest date from MusicBrainz
+    def _find_date(self, item: Item, approach: str) -> Optional[DateWrapper]:
+        """Find oldest date of an item using given approach"""
         try:
             oldest_date = self._get_oldest_date(item, approach)
         except mb_api.MusicBrainzError as e:
@@ -387,7 +386,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
         self._log.info('Oldest date for {0.artist} - {0.title} ({1} approach): {2}', item, approach,
                        format_date(oldest_date))
-        return approach, oldest_date
+        return oldest_date
 
     def _overwrite_date(self, approach: str) -> bool:
         """Whether date fields must be overwritten for given approach"""

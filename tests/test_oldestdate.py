@@ -256,17 +256,18 @@ class OptionsTest(OldestDatePluginTestCase):
         self.assertTrue(self.plugin._overwrite_date('recording'))
         self.assertFalse(self.plugin._overwrite_date('work'))
 
-    @patch('beets.ui.input_options', return_value='s')
-    def test_prompt_for_skip(self, input_options):
+    @patch('beets.ui.input_options', return_value='n')
+    def test_prompt_for_no_skips_processing(self, input_options):
         self.plugin.config['prompt_for'] = ['work']
         self.plugin.config['singleton'] = 'work'
         item = self.make_item(singleton=True)
         self.plugin._process_file(item)
-        input_options.assert_called_once()
+        input_options.assert_called_once_with(('Yes', 'No'))
         self.assertNotIn('recording_year', item)
+        self.assertEqual([], self.mb.calls)  # Asked before any lookup
 
-    @patch('beets.ui.input_options', return_value='a')
-    def test_prompt_for_apply(self, input_options):
+    @patch('beets.ui.input_options', return_value='y')
+    def test_prompt_for_yes_processes(self, input_options):
         self.plugin.config['prompt_for'] = ['recording', 'work']
         self.plugin.config['singleton'] = 'work'
         item = self.make_item(singleton=True)
@@ -282,15 +283,59 @@ class OptionsTest(OldestDatePluginTestCase):
         input_options.assert_not_called()
         self.assertEqual(2005, item.recording_year)
 
-    @patch('beets.ui.input_options', return_value='a')
+    @patch('beets.ui.input_options')
+    def test_prompt_for_not_asked_for_already_processed(self, input_options):
+        self.plugin.config['prompt_for'] = ['recording']
+        item = self.make_item(singleton=True, recording_year=2000)
+        self.plugin._process_file(item)
+        input_options.assert_not_called()
+
+    @patch('beets.ui.input_options', return_value='n')
+    def test_prompt_for_compilation_with_singleton_alias(self, input_options):
+        # Compilation processed with the recording ("singleton") approach, which requires a prompt
+        self.plugin.config['compilation'] = 'singleton'
+        self.plugin.config['prompt_for'] = ['singleton']
+        item = self.make_item(singleton=False, comp=True)
+        self.plugin._process_file(item)
+        input_options.assert_called_once()
+        self.assertNotIn('recording_year', item)
+
+    def album_items(self):
+        items = [Item(title='Thriller', artist='Michael Jackson', album='Thriller', mb_trackid=fx.RECORDING_ID,
+                      mb_albumid=fx.RELEASE_ID, data_source='MusicBrainz', track=i) for i in (1, 2)]
+        self.lib.add_album(items)
+        return items
+
+    @patch('beets.ui.input_options', return_value='y')
     def test_prompt_once_per_album(self, input_options):
         self.plugin.config['prompt_for'] = ['release']
-        items = [Item(title='Thriller', artist='Michael Jackson', mb_trackid=fx.RECORDING_ID, mb_albumid=fx.RELEASE_ID,
-                      data_source='MusicBrainz', track=i) for i in (1, 2)]
-        self.lib.add_album(items)
+        self.album_items()
         self.plugin._command_func(self.lib, mock.Mock(approach=None, force=None), [])
         input_options.assert_called_once()
         self.assertEqual([2005, 2005], [int(item.recording_year) for item in self.lib.items()])
+
+    @patch('beets.ui.input_options', return_value='n')
+    def test_prompt_album_on_import(self, input_options):
+        self.plugin.config['prompt_for'] = ['release']
+        items = self.album_items()
+        task = mock.Mock()
+        task.imported_items.return_value = items
+        self.plugin._on_import(None, task)
+        input_options.assert_called_once()
+        self.assertTrue(all('recording_year' not in item for item in items))
+
+    @patch('beets.ui.input_options')
+    def test_prompt_for_quiet_import(self, input_options):
+        from beets import config
+        self.plugin.config['prompt_for'] = ['recording']
+        config['import']['quiet'] = True
+        try:
+            item = self.make_item(singleton=True)
+            self.plugin._process_file(item)
+        finally:
+            config['import']['quiet'] = False
+        input_options.assert_not_called()
+        self.assertEqual(2005, item.recording_year)
 
     def test_command_forced_approach(self):
         item = self.make_item(singleton=True)
