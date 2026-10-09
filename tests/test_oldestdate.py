@@ -1,13 +1,17 @@
 import os
+import tempfile
+import time
 import unittest
 from unittest import mock
 from unittest.mock import patch
 
+from beets import config
 from beets.autotag import AlbumInfo, TrackInfo
 from beets.importer import action
 from beets.library import Item, Library
 
 from beetsplug import oldestdate
+from beetsplug import mb_api
 from beetsplug.date_wrapper import DateWrapper
 from tests import thriller_fixtures as fx
 
@@ -36,6 +40,17 @@ class OldestDatePluginTestCase(unittest.TestCase):
         write_patcher = patch.object(Item, 'write')  # Never touch files
         self.item_write = write_patcher.start()
         self.addCleanup(write_patcher.stop)
+        # Skipped-track log is written in the beets directory
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmpdir.cleanup)
+        config['directory'] = self.tmpdir.name
+        self.skip_log = os.path.join(self.tmpdir.name, 'oldestdate-skipped.txt')
+
+    def skipped_lines(self):
+        if not os.path.exists(self.skip_log):
+            return []
+        with open(self.skip_log, encoding='utf-8') as handle:
+            return handle.read().splitlines()
 
     def tearDown(self):
         self.lib._close()
@@ -182,6 +197,10 @@ class ThrillerApproachesTest(OldestDatePluginTestCase):
         item = self.make_item(mb_trackid='unknown')
         self.plugin._process_file(item)
         self.assertNotIn('recording_year', item)
+        lines = self.skipped_lines()
+        self.assertEqual(1, len(lines))
+        self.assertIn('| Michael Jackson - Thriller |', lines[0])
+        self.assertIn('MusicBrainz request failed: HTTP 404 for recording/unknown', lines[0])
 
 
 class ImportTest(OldestDatePluginTestCase):
@@ -420,6 +439,187 @@ class MissingWorkIdTest(OldestDatePluginTestCase):
         self.plugin.config['compilation'] = 'work'
         self.plugin._import_task_choice(self.album_task(va=True), None)
         input_options.assert_called_once()
+
+
+class RobustnessTest(OldestDatePluginTestCase):
+    def test_partial_musicbrainz_dates(self):
+        recording = self.mb.get_recording(fx.RECORDING_ID)
+        recording['first-release-date'] = '2005-07-??'
+        self.plugin._recordings_cache[fx.RECORDING_ID] = recording
+        date = self.plugin._get_oldest_date(self.make_item(), 'recording')
+        self.assertEqual((2005, 7, None), (date.y, date.m, date.d))
+
+    def test_work_partial_dates_not_invented(self):
+        work = self.mb.get_work(fx.WORK_ID)
+        for rel in work['relations']:
+            if rel['recording']['id'] == fx.ORIGINAL_RECORDING_ID:
+                rel['recording']['first-release-date'] = '1982-??-??'
+        self.plugin._works_cache[fx.WORK_ID] = work
+        date = self.plugin._get_oldest_date(self.make_item(), 'work')
+        self.assertEqual((1982, None, None), (date.y, date.m, date.d))
+
+    def test_mixed_artist_credit_entries(self):
+        # Join phrases or malformed entries between artists must not crash cover filtering
+        recording = self.mb.get_recording(fx.COVER_RECORDING_ID)
+        recording['artist-credit'] = [' feat. ', {'artist': 'not-a-dict'}, None] + recording['artist-credit']
+        self.plugin._recordings_cache[fx.COVER_RECORDING_ID] = recording
+        date = self.plugin._get_oldest_date(self.make_item(mb_trackid=fx.COVER_RECORDING_ID), 'work')
+        self.assertEqual(DateWrapper(1980), date)
+        self.assertEqual([fx.COVER_ARTIST_ID], mb_api.artist_ids(recording))
+
+    def test_malformed_relations(self):
+        recording = self.mb.get_recording(fx.RECORDING_ID)
+        recording['relations'] = ['oops', None] + recording['relations']
+        self.plugin._recordings_cache[fx.RECORDING_ID] = recording
+        self.assertEqual(DateWrapper(1982, 11, 30), self.plugin._get_oldest_date(self.make_item(), 'work'))
+
+    def test_unexpected_error_is_logged_and_skipped(self):
+        item = self.make_item()
+        with patch.object(self.plugin, '_get_oldest_date', side_effect=KeyError('boom')):
+            self.plugin._process_file(item)
+        self.assertNotIn('recording_year', item)
+        self.assertIn("KeyError: 'boom'", self.skipped_lines()[0])
+
+    def test_no_date_is_logged(self):
+        item = self.make_item(singleton=False, mb_albumid='')
+        self.plugin._process_file(item)
+        self.assertIn('no usable date found (release approach)', self.skipped_lines()[0])
+
+    def test_skip_log_without_directory(self):
+        config['directory'] = ''
+        self.plugin._process_file(self.make_item(mb_trackid='unknown'))
+        self.assertEqual([], self.skipped_lines())
+
+
+class FileDateTest(OldestDatePluginTestCase):
+    def setUp(self):
+        super().setUp()
+        self.plugin.config['use_file_date'] = True
+        recording = self.mb.get_recording(fx.RECORDING_ID)
+        recording['first-release-date'] = ''
+        self.plugin._recordings_cache[fx.RECORDING_ID] = recording
+
+    def test_zero_and_missing_years_are_unknown(self):
+        for year in (0, None, ''):
+            item = self.make_item(year=year, month=0, day=0)
+            self.assertIsNone(self.plugin._item_date_or_none(item))
+        self.plugin._recordings_cache[fx.RECORDING_ID]['first-release-date'] = '2005'
+        item = self.make_item(year=0, month=0, day=0)
+        self.assertEqual(DateWrapper(2005), self.plugin._get_oldest_date(item, 'recording'))
+
+    def test_implausibly_old_year_is_unknown(self):
+        item = self.make_item(year=999, month=1, day=1)
+        self.assertIsNone(self.plugin._item_date_or_none(item))
+        self.plugin.config['minimum_file_year'] = 900
+        self.assertEqual(DateWrapper(999, 1, 1), self.plugin._item_date_or_none(item))
+
+    def test_valid_file_date(self):
+        date = self.plugin._item_date_or_none(self.make_item(year=1999, month=5, day=0))
+        self.assertEqual((1999, 5, None), (date.y, date.m, date.d))
+        date = self.plugin._item_date_or_none(self.make_item(year=1999, month=0, day=5))
+        self.assertEqual((1999, None, None), (date.y, date.m, date.d))
+
+
+class ScanLimitsTest(OldestDatePluginTestCase):
+    def test_max_related_recordings_limits_scan(self):
+        # Related recordings (excluding the item's own): 1982 original, live, cover
+        self.plugin.config['max_related_recordings'] = 1
+        self.assertEqual(DateWrapper(1982, 11, 30), self.plugin._get_oldest_date(self.make_item(), 'work'))
+        work = self.mb.get_work(fx.WORK_ID)
+        work['relations'].insert(0, work['relations'].pop(2))  # live recording first, filtered out
+        self.plugin._works_cache[fx.WORK_ID] = work
+        self.assertEqual(DateWrapper(2005), self.plugin._get_oldest_date(self.make_item(), 'work'))
+
+    def test_max_related_recordings_zero_is_unlimited(self):
+        self.plugin.config['max_related_recordings'] = 0
+        self.assertEqual(DateWrapper(1982, 11, 30), self.plugin._get_oldest_date(self.make_item(), 'work'))
+
+    def test_timeout_keeps_oldest_date_found(self):
+        self.plugin.config['filter_recordings'] = False
+        self.plugin.config['singleton'] = 'work'
+        calls = []
+
+        def check_deadline(phase):
+            calls.append(phase)
+            if phase.startswith('scanning related recordings (2/'):
+                raise oldestdate.ScanTimedOut(phase)
+
+        item = self.make_item()
+        with patch.object(self.plugin, '_check_deadline', side_effect=check_deadline):
+            self.plugin._process_file(item)
+        # 1982 recording scanned (1/3) before the timeout, 1981 live recording (2/3) not reached
+        self.assertEqual(1982, item.recording_year)
+        self.assertEqual([], self.skipped_lines())
+
+    def test_timeout_without_date_is_skipped(self):
+        self.plugin.config['max_scan_seconds'] = 0.001
+        with patch.object(oldestdate.time, 'monotonic', side_effect=[0.0] + [10.0] * 10):
+            item = self.make_item()
+            self.plugin._process_file(item)
+        self.assertNotIn('recording_year', item)
+        self.assertIn('scan timed out after', self.skipped_lines()[0])
+
+    def test_real_deadline(self):
+        self.plugin.config['max_scan_seconds'] = 30
+        start = time.monotonic()
+        item = self.make_item()
+        self.plugin.config['singleton'] = 'work'
+        self.plugin._process_file(item)
+        self.assertEqual(1982, item.recording_year)
+        self.assertLess(time.monotonic() - start, 30)
+        self.assertIsNone(self.plugin._deadline)
+
+
+class OutputTest(OldestDatePluginTestCase):
+    @patch('beets.ui.print_')
+    def test_progress_disabled(self, print_):
+        self.plugin.config['singleton'] = 'work'
+        self.plugin._process_file(self.make_item())
+        self.assertEqual(1, print_.call_count)  # Only the result line
+
+    @patch('beets.ui.print_')
+    def test_progress_enabled(self, print_):
+        self.plugin.config['show_progress'] = True
+        self.plugin.config['filter_recordings'] = False
+        self.plugin.config['singleton'] = 'work'
+        self.plugin._process_file(self.make_item())
+        lines = [call.args[0] for call in print_.call_args_list]
+        self.assertEqual('oldestdate: Starting: Michael Jackson - Thriller (work approach)', lines[0])
+        self.assertIn('oldestdate: Fetching recording ' + fx.RECORDING_ID, lines)
+        self.assertIn('oldestdate: Fetching work ' + fx.WORK_ID, lines)
+        self.assertIn('oldestdate: Work {} has 3 related recordings'.format(fx.WORK_ID), lines)
+        self.assertIn('oldestdate: Work scan 1/3; current oldest: 2005', lines)
+        self.assertIn('oldestdate: Work scan 3/3; current oldest: 1981', lines)
+        self.assertTrue(lines[-1].startswith('oldestdate: Oldest date for: Michael Jackson - Thriller is 1981 '))
+
+    @patch('beets.ui.print_')
+    def test_progress_every(self, print_):
+        self.plugin.config['show_progress'] = True
+        self.plugin.config['progress_every'] = 10
+        self.plugin.config['singleton'] = 'work'
+        self.plugin._process_file(self.make_item())
+        lines = [call.args[0] for call in print_.call_args_list]
+        self.assertEqual(['oldestdate: Work scan 1/3; current oldest: 2005',
+                          'oldestdate: Work scan 3/3; current oldest: 1982-11-30'],
+                         [line for line in lines if 'Work scan' in line])
+
+    @patch('beets.ui.print_')
+    def test_result_line(self, print_):
+        with patch.object(oldestdate.time, 'monotonic', side_effect=[100.0] + [102.4] * 20):
+            self.plugin._process_file(self.make_item())
+        print_.assert_called_once_with('oldestdate: Oldest date for: Michael Jackson - Thriller is 2005 '
+                                       '[recording approach; elapsed: 2.4s; timed out: no]')
+
+    def test_overwrite_line(self):
+        self.plugin.config['overwrite_date'] = True
+        self.plugin.config['singleton'] = 'work'
+        item = self.make_item(year=1995, month=0, day=0)
+        with patch.object(self.plugin._log, 'warning') as warning, \
+                patch.object(oldestdate.time, 'monotonic', side_effect=[100.0] + [102.4] * 20):
+            self.plugin._process_file(item)
+        warning.assert_called_once_with(
+            'Overwriting date field for: {0.artist} - {0.title} from {0.year}-{0.month}-{0.day} to {1} [{2}]',
+            item, '1982-11-30', 'work approach; elapsed: 2.4s; timed out: no')
 
 
 @unittest.skipUnless(os.environ.get('OLDESTDATE_ONLINE_TESTS'), 'Set OLDESTDATE_ONLINE_TESTS=1 to query MusicBrainz')

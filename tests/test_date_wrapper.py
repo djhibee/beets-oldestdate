@@ -1,6 +1,6 @@
 import datetime
 import unittest
-from beetsplug.date_wrapper import DateWrapper
+from beetsplug.date_wrapper import DateWrapper, parse_musicbrainz_date
 
 
 class DateWrapperTest(unittest.TestCase):
@@ -156,3 +156,30 @@ class DateWrapperTest(unittest.TestCase):
         second_date = DateWrapper(today.year, today.month, today.day)
 
         self.assertEqual(first_date, second_date)
+
+
+class ParseMusicBrainzDateTest(unittest.TestCase):
+    def parts(self, value):
+        date = parse_musicbrainz_date(value)
+        return None if date is None else (date.y, date.m, date.d)
+
+    def test_full_and_partial_dates(self):
+        self.assertEqual((1982, 11, 30), self.parts('1982-11-30'))
+        self.assertEqual((1982, 11, None), self.parts('1982-11'))
+        self.assertEqual((1982, None, None), self.parts('1982'))
+
+    def test_unknown_components_not_invented(self):
+        self.assertEqual((2015, None, None), self.parts('2015-??-??'))
+        self.assertEqual((2015, 7, None), self.parts('2015-07-??'))
+        self.assertEqual((2015, None, None), self.parts('2015-??-13'))  # Day without month is unusable
+        self.assertEqual((2015, None, None), self.parts('2015-00-00'))
+        self.assertEqual((2015, 7, None), self.parts('2015-07-00'))
+        self.assertEqual((2015, None, None), self.parts('2015-??'))
+
+    def test_invalid(self):
+        for value in (None, '', '0000', '15', 'unknown', '2015-13-01', '2015-02-30', '2015/07/01'):
+            self.assertIsNone(parse_musicbrainz_date(value), value)
+
+    def test_comparison_of_partial_dates(self):
+        self.assertTrue(parse_musicbrainz_date('2015-07-??') < parse_musicbrainz_date('2015-??-??'))
+        self.assertTrue(parse_musicbrainz_date('2014-??-??') < parse_musicbrainz_date('2015-01-01'))

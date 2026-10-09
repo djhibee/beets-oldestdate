@@ -89,21 +89,40 @@ class MusicBrainzClient:
         return self.get_entity('work', work_id, includes)
 
 
-# Helpers to extract data from MusicBrainz JSON entities
+# Helpers to extract data from MusicBrainz JSON entities.
+# Never assume every entry is a mapping: e.g. artist-credit lists may contain plain join phrases (" feat. ").
 
-def work_relations(recording: JSON) -> List[JSON]:
+def mapping(value: Any) -> JSON:
+    """Return value if it is a mapping, an empty mapping otherwise"""
+    return value if isinstance(value, dict) else {}
+
+
+def _list(value: Any) -> List[Any]:
+    return value if isinstance(value, list) else []
+
+
+def work_relations(recording: Any) -> List[JSON]:
     """Return the work relations of a recording"""
-    return [rel for rel in recording.get('relations') or []
-            if rel.get('target-type') == 'work' and rel.get('work')]
+    return [rel for rel in map(mapping, _list(mapping(recording).get('relations')))
+            if rel.get('target-type') == 'work' and mapping(rel.get('work'))]
 
 
-def recording_relations(work: JSON) -> List[JSON]:
+def recording_relations(work: Any) -> List[JSON]:
     """Return the recording relations of a work"""
-    return [rel for rel in work.get('relations') or []
-            if rel.get('target-type') == 'recording' and rel.get('recording')]
+    return [rel for rel in map(mapping, _list(mapping(work).get('relations')))
+            if rel.get('target-type') == 'recording' and mapping(rel.get('recording')).get('id')]
 
 
-def artist_ids(entity: JSON) -> List[str]:
+def relation_attributes(relation: Any) -> List[str]:
+    """Return the attributes of a relation (e.g. cover, live)"""
+    return [attribute for attribute in _list(mapping(relation).get('attributes')) if isinstance(attribute, str)]
+
+
+def artist_ids(entity: Any) -> List[str]:
     """Return the artist ids from the artist credit of an entity"""
-    return [credit['artist']['id'] for credit in entity.get('artist-credit') or []
-            if isinstance(credit, dict) and 'id' in (credit.get('artist') or {})]
+    ids = []
+    for credit in _list(mapping(entity).get('artist-credit')):
+        artist_id = mapping(mapping(credit).get('artist')).get('id')
+        if isinstance(artist_id, str) and artist_id:
+            ids.append(artist_id)
+    return ids
