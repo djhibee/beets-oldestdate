@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beets-oldestdate"
-version = "1.1.4" # Also change in oldestdate.py
+version = "2.0.0" # Also change in beetsplug/mb_api.py
 authors = [
     { name="kernitus" },
 ]
@@ -18,10 +18,13 @@ classifiers = [
 ]
 dependencies = [
     "mediafile~=0.9",
-    "musicbrainzngs~=0.7",
+    "requests>=2.20",
     "python-dateutil~=2.8",
     "beets~=1.6",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["beetsplug"]
 
 [project.entry-points.beetsplug]
 beets-oldestdate = "beets.oldestdate"

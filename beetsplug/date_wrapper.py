@@ -1,4 +1,5 @@
 import datetime
+import re
 from typing import Optional
 
 from dateutil import parser
@@ -109,3 +110,42 @@ class DateWrapper(datetime.datetime):
                 return self.m == other.m
         else:
             return self.m == other.m
+
+
+# MusicBrainz stores partially known dates with ``??`` (or ``00`` in older data) for unknown components.
+_PARTIAL_DATE_RE = re.compile(r'^\s*(?P<year>\d{4})(?:-(?P<month>\d{2}|\?\?)(?:-(?P<day>\d{2}|\?\?))?)?\s*$')
+
+
+def parse_musicbrainz_date(value: Optional[str]) -> Optional[DateWrapper]:
+    """
+    Parse a full or partial MusicBrainz date (YYYY, YYYY-MM, YYYY-MM-DD, with ``??``/``00`` for unknown parts).
+    Unknown month or day are never invented: ``2015-??-??`` and ``2015-??-13`` are year-only, ``2015-07-??`` is
+    year and month only. Returns None when the date has no usable year or invalid components.
+    """
+    if not value:
+        return None
+    match = _PARTIAL_DATE_RE.match(str(value))
+    if not match:
+        return None
+
+    year = int(match.group('year'))
+    if not datetime.MINYEAR <= year <= datetime.MAXYEAR:
+        return None
+
+    month: Optional[int] = None
+    day: Optional[int] = None
+    month_text = match.group('month')
+    day_text = match.group('day')
+    if month_text not in (None, '??', '00'):
+        month = int(month_text)
+        if not 1 <= month <= 12:
+            return None
+        # A day without a known month is not a usable level of precision
+        if day_text not in (None, '??', '00'):
+            day = int(day_text)
+            try:
+                datetime.date(year, month, day)
+            except ValueError:  # Impossible calendar date such as 2015-02-30
+                return None
+
+    return DateWrapper(year, month, day)
