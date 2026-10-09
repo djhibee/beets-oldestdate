@@ -3,6 +3,8 @@ import unittest
 from unittest import mock
 from unittest.mock import patch
 
+from beets.autotag import AlbumInfo, TrackInfo
+from beets.importer import action
 from beets.library import Item, Library
 
 from beetsplug import oldestdate
@@ -227,6 +229,152 @@ class ImportTest(OldestDatePluginTestCase):
         item = Item(mb_trackid="some_track_id", data_source="NonMusicBrainz", artist="Test Artist", title="Test Title")
         self.plugin._process_file(item)
         mock_log.assert_called_once_with('Skipping track with no mb_trackid: {0.artist} - {0.title}', item)
+
+
+class OptionsTest(OldestDatePluginTestCase):
+    def test_overwrite_date_bool(self):
+        self.plugin.config['overwrite_date'] = True
+        item = self.make_item(singleton=True)
+        self.plugin.config['singleton'] = 'work'
+        self.plugin._process_file(item)
+        self.assertEqual((1982, 11, 30), (item.year, item.month, item.day))
+
+    def test_overwrite_date_only_for_release_approach(self):
+        self.plugin.config['overwrite_date'] = ['release']
+        self.plugin.config['singleton'] = 'work'
+        singleton = self.make_item(singleton=True)
+        self.plugin._process_file(singleton)
+        self.assertEqual(1982, singleton.recording_year)
+        self.assertEqual((2005, 10, 17), (singleton.year, singleton.month, singleton.day))  # Untouched
+
+        album_item = self.make_item(singleton=False, year=2010)
+        self.plugin._process_file(album_item)
+        self.assertEqual(2005, album_item.year)  # Overwritten
+
+    def test_overwrite_date_single_approach_string(self):
+        self.plugin.config['overwrite_date'] = 'recording'
+        self.assertTrue(self.plugin._overwrite_date('recording'))
+        self.assertFalse(self.plugin._overwrite_date('work'))
+
+    @patch('beets.ui.input_options', return_value='s')
+    def test_prompt_for_skip(self, input_options):
+        self.plugin.config['prompt_for'] = ['work']
+        self.plugin.config['singleton'] = 'work'
+        item = self.make_item(singleton=True)
+        self.plugin._process_file(item)
+        input_options.assert_called_once()
+        self.assertNotIn('recording_year', item)
+
+    @patch('beets.ui.input_options', return_value='a')
+    def test_prompt_for_apply(self, input_options):
+        self.plugin.config['prompt_for'] = ['recording', 'work']
+        self.plugin.config['singleton'] = 'work'
+        item = self.make_item(singleton=True)
+        self.plugin._process_file(item)
+        input_options.assert_called_once()
+        self.assertEqual(1982, item.recording_year)
+
+    @patch('beets.ui.input_options')
+    def test_prompt_for_other_approach(self, input_options):
+        self.plugin.config['prompt_for'] = ['work']
+        item = self.make_item(singleton=True)  # recording approach
+        self.plugin._process_file(item)
+        input_options.assert_not_called()
+        self.assertEqual(2005, item.recording_year)
+
+    @patch('beets.ui.input_options', return_value='a')
+    def test_prompt_once_per_album(self, input_options):
+        self.plugin.config['prompt_for'] = ['release']
+        items = [Item(title='Thriller', artist='Michael Jackson', mb_trackid=fx.RECORDING_ID, mb_albumid=fx.RELEASE_ID,
+                      data_source='MusicBrainz', track=i) for i in (1, 2)]
+        self.lib.add_album(items)
+        self.plugin._command_func(self.lib, mock.Mock(approach=None, force=None), [])
+        input_options.assert_called_once()
+        self.assertEqual([2005, 2005], [int(item.recording_year) for item in self.lib.items()])
+
+    def test_command_forced_approach(self):
+        item = self.make_item(singleton=True)
+        self.plugin._command_func(self.lib, mock.Mock(approach='work', force=None), [])
+        item.load()
+        self.assertEqual(1982, int(item.recording_year))
+        self.item_write.assert_called_once()
+
+        # Already processed: skipped unless forced
+        self.plugin._command_func(self.lib, mock.Mock(approach='recording', force=None), [])
+        item.load()
+        self.assertEqual(1982, int(item.recording_year))
+        self.plugin._command_func(self.lib, mock.Mock(approach='recording', force=True), [])
+        item.load()
+        self.assertEqual(2005, int(item.recording_year))
+
+    def test_command_invalid_approach(self):
+        from beets.ui import UserError
+        with self.assertRaises(UserError):
+            self.plugin._command_func(self.lib, mock.Mock(approach='hybrid', force=None), [])
+
+    def test_command_parser(self):
+        command = self.plugin.commands()[0]
+        opts, _ = command.parser.parse_args(['-a', 'work', '-f'])
+        self.assertEqual('work', opts.approach)
+        self.assertTrue(opts.force)
+
+
+class MissingWorkIdTest(OldestDatePluginTestCase):
+    def setUp(self):
+        super().setUp()
+        recording = self.mb.get_recording(fx.RECORDING_ID)
+        recording['relations'] = []  # No work
+        self.plugin._recordings_cache[fx.RECORDING_ID] = recording
+        self.track = TrackInfo(title='Thriller', artist='Michael Jackson', track_id=fx.RECORDING_ID,
+                               data_source='MusicBrainz')
+
+    def singleton_task(self):
+        return mock.Mock(is_album=False, match=mock.Mock(info=self.track), choice_flag=None)
+
+    def album_task(self, **album_info):
+        info = AlbumInfo(tracks=[self.track], **album_info)
+        return mock.Mock(is_album=True, match=mock.Mock(info=info, mapping={'item': self.track}), choice_flag=None)
+
+    @patch('beets.ui.input_options')
+    def test_not_prompted_for_recording_approach(self, input_options):
+        task = self.singleton_task()
+        self.plugin._import_task_choice(task, None)
+        input_options.assert_not_called()
+        self.assertIsNone(task.choice_flag)
+
+    @patch('beets.ui.input_options', return_value='s')
+    def test_prompted_for_work_approach(self, input_options):
+        self.plugin.config['singleton'] = 'work'
+        task = self.singleton_task()
+        self.plugin._import_task_choice(task, None)
+        input_options.assert_called_once_with(('Use this recording', 'Try again', 'Skip track'))
+        self.assertEqual(action.SKIP, task.choice_flag)
+
+    @patch('beets.ui.input_options', return_value='u')
+    def test_use_recording(self, input_options):
+        self.plugin.config['singleton'] = 'work'
+        task = self.singleton_task()
+        self.plugin._import_task_choice(task, None)
+        self.assertIsNone(task.choice_flag)
+
+    @patch('beets.ui.input_options')
+    def test_album_not_prompted_for_release_approach(self, input_options):
+        self.plugin._import_task_choice(self.album_task(), None)
+        input_options.assert_not_called()
+
+    @patch('beets.ui.input_options', return_value='s')
+    def test_album_prompted_for_work_album_type(self, input_options):
+        self.plugin.config['album_type'] = {'live': 'work'}
+        task = self.album_task(albumtypes=['album', 'live'])
+        self.plugin._import_task_choice(task, None)
+        input_options.assert_called_once_with(('Use this recording', 'Try again', 'Skip album'))
+        self.assertEqual(action.SKIP, task.choice_flag)
+
+    @patch('beets.ui.input_options', return_value='s')
+    def test_compilation_prompted_for_work(self, input_options):
+        self.plugin.config['compilation'] = 'work'
+        self.plugin._import_task_choice(self.album_task(va=True), None)
+        input_options.assert_called_once()
 
 
 @unittest.skipUnless(os.environ.get('OLDESTDATE_ONLINE_TESTS'), 'Set OLDESTDATE_ONLINE_TESTS=1 to query MusicBrainz')
