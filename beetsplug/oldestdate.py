@@ -1,21 +1,13 @@
-import time
-from typing import Optional, Any, List, Dict, Callable, TypeVar
+from typing import Optional, Any, List, Dict
 import mediafile
-import musicbrainzngs
 from beets import ui, config
 from beets.autotag import hooks, TrackInfo
 from beets.importer import action, ImportTask, ImportSession
 from beets.library import Item, Library
 from beets.plugins import BeetsPlugin
-from musicbrainzngs import NetworkError
 
+from . import mb_api
 from .date_wrapper import DateWrapper
-
-musicbrainzngs.set_useragent(
-    "Beets oldestdate plugin",
-    '1.1.4',  # Also change in pyproject.toml
-    "https://github.com/kernitus/beets-oldestdate"
-)
 
 # Type alias
 Recording = Dict[str, Any]
@@ -56,9 +48,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
                 # Add heavy weight for missing work_id from a track
                 config['match']['distance_weights'].add({'work_id': 4})
 
-        # Get global MusicBrainz host setting
-        musicbrainzngs.set_hostname(config['musicbrainz']['host'].get())
-        musicbrainzngs.set_rate_limit(1, config['musicbrainz']['ratelimit'].get())
+        self._mb: Optional[mb_api.MusicBrainzClient] = None
 
         for recording_field in (
                 'recording_year',
@@ -127,76 +117,48 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
                 task.choice_flag = action.SKIP
                 return
 
-    T = TypeVar('T')
-    def _retry_on_network_error(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        max_retries: int = self.config['max_network_retries'].get()
-        for attempt in range(max_retries):
-            try:
-                return func(*args, **kwargs)
-            except NetworkError:
-                if attempt < max_retries - 1:  # No need to wait after the last attempt
-                    delay: int = 2 ** attempt
-                    self._log.info(f'Network call failed, attempt {attempt}/{max_retries}. Trying again in {delay}')
-                    time.sleep(delay)  # Exponential backoff each attempt
-                else:
-                    raise
-        assert False, "Unreachable code"  # To satisfy mypy; this will never actually be reached
+    @property
+    def mb(self) -> mb_api.MusicBrainzClient:
+        """MusicBrainz JSON API client, configured from the global beets MusicBrainz settings"""
+        if self._mb is None:
+            mb_config = config['musicbrainz']
+            host = str(mb_config['host'].get() or 'musicbrainz.org')
+            https = bool(mb_config['https'].get()) if 'https' in mb_config.keys() else False
+            ratelimit = int(mb_config['ratelimit'].get() or 1) if 'ratelimit' in mb_config.keys() else 1
+            interval = float(mb_config['ratelimit_interval'].get() or 1.0) \
+                if 'ratelimit_interval' in mb_config.keys() else 1.0
+            self._mb = mb_api.MusicBrainzClient(
+                host=host,
+                https=https or host == 'musicbrainz.org',
+                ratelimit=ratelimit,
+                ratelimit_interval=interval,
+                max_retries=int(self.config['max_network_retries'].get()),
+                log=self._log,
+            )
+        return self._mb
 
     def _get_work_id_from_recording(self, recording: Recording) -> Optional[str]:
         """Extract first valid work_id from recording"""
-        work_id = None
-
-        if 'work-relation-list' in recording:
-            for work_rel in recording['work-relation-list']:
-                if 'work' in work_rel:
-                    current_work = work_rel['work']
-                    if 'id' in current_work:
-                        work_id = current_work['id']
-                        break
-
-        return work_id
+        for work_rel in mb_api.work_relations(recording):
+            if 'id' in work_rel['work']:
+                return str(work_rel['work']['id'])
+        return None
 
     def _contains_artist(self, recording: Recording, artist_ids: List[str]) -> bool:
         """Returns whether this recording contains at least one of the specified artists"""
-        artist_found = False
-        if 'artist-credit' in recording:
-            for artist in recording['artist-credit']:
-                if 'artist' in artist:
-                    artist = artist['artist']
-                    if 'id' in artist and artist['id'] in artist_ids:  # Contains at least one of the identified artists
-                        artist_found = True
-                        break
-        return artist_found
+        return any(artist_id in artist_ids for artist_id in mb_api.artist_ids(recording))
 
     def _get_artist_ids_from_recording(self, recording: Recording) -> List[str]:
         """Extract artist ids from a recording"""
-        ids = []
-
-        if 'artist-credit' in recording:
-            for artist in recording['artist-credit']:
-                if 'artist' in artist:
-                    artist = artist['artist']
-                    if 'id' in artist:
-                        ids.append(artist['id'])
-        return ids
+        return mb_api.artist_ids(recording)
 
     def _is_cover(self, recording: Recording) -> bool:
         """Returns whether given fetched recording is a cover of a work"""
-        if 'work-relation-list' in recording:
-            for work in recording['work-relation-list']:
-                if 'attribute-list' in work:
-                    if 'cover' in work['attribute-list']:
-                        return True
-        return False
+        return any('cover' in (rel.get('attributes') or []) for rel in mb_api.work_relations(recording))
 
     def _fetch_work(self, work_id: str) -> Work:
         """Fetch work, including recording relations"""
-        work: Work = self._retry_on_network_error(
-            musicbrainzngs.get_work_by_id,
-            work_id,
-            includes=['recording-rels']
-        )['work']
-        return work
+        return self.mb.get_work(work_id, includes=['recording-rels'])
 
     def _has_work_id(self, recording_id: str) -> bool:
         """Return whether the recording has a work id"""
@@ -260,11 +222,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
     def _fetch_recording(self, recording_id: str) -> Recording:
         """Fetch and cache recording from MusicBrainz, including releases and work relations"""
-        recording: Recording = self._retry_on_network_error(
-            musicbrainzngs.get_recording_by_id,
-            recording_id,
-            includes=['artists', 'releases', 'work-rels']
-        )['recording']
+        recording: Recording = self.mb.get_recording(recording_id, includes=['artists', 'releases', 'work-rels'])
 
         self._recordings_cache[recording_id] = recording
         return recording
@@ -288,7 +246,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
             rec_id = rec_id['id']
 
             # If a cover, filter recordings to only keep covers. Otherwise, remove covers
-            if is_cover != ('attribute-list' in rec and 'cover' in rec['attribute-list']):
+            if is_cover != ('cover' in (rec.get('attributes') or [])):
                 # We can't filter by author here without fetching each individual recording.
                 self._recordings_cache.pop(rec_id, None)  # Remove recording from cache
                 continue
@@ -325,7 +283,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
             # Shorten recordings list, but if song is a cover, only keep covers
             if is_cover:
-                if 'attribute-list' not in rec or 'cover' not in rec['attribute-list']:
+                if 'cover' not in (rec.get('attributes') or []):
                     self._recordings_cache.pop(rec_id, None)  # Remove recording from cache
                     continue
                 else:
@@ -334,15 +292,15 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
                     if not self._contains_artist(fetched_recording, artist_ids):
                         self._recordings_cache.pop(rec_id, None)  # Remove recording from cache
                         continue
-            elif 'attribute-list' in rec and (self.config['filter_recordings'] or 'cover' in rec['attribute-list']):
+            elif rec.get('attributes') and (self.config['filter_recordings'] or 'cover' in rec['attributes']):
                 self._recordings_cache.pop(rec_id, None)  # Remove recording from cache
                 continue
 
             if not fetched_recording:
                 fetched_recording = self._get_recording(rec_id)
 
-            if 'release-list' in fetched_recording:
-                for release in fetched_recording['release-list']:
+            if 'releases' in fetched_recording:
+                for release in fetched_recording['releases']:
                     if release_types is None or (  # Filter by recording type, i.e. Official
                             'status' in release and release['status'] in release_types):
                         if 'date' in release:
@@ -393,10 +351,11 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
         # Fetch work, including associated recordings
         work = self._fetch_work(work_id)
 
-        if 'recording-relation-list' not in work:
+        recording_rels = mb_api.recording_relations(work)
+        if not recording_rels:
             self._log.error(
                 'Work {0} has no valid associated recordings! Please choose another recording or amend the data!',
                 work_id)
             return None
 
-        return self._iterate_dates(work['recording-relation-list'], starting_date, is_cover, artist_ids)
+        return self._iterate_dates(recording_rels, starting_date, is_cover, artist_ids)

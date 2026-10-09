@@ -15,7 +15,7 @@ class OldestDatePluginTest(unittest.TestCase):
 
     def setUp(self):
         self.recording_id = 20
-        self.recording = {"recording": {"id": self.recording_id}, "begin": "1978", "release-list": [{"date": "1977"}]}
+        self.recording = {"recording": {"id": self.recording_id}, "begin": "1978", "releases": [{"date": "1977"}]}
         self.recordings = [self.recording]
         self.is_cover = False
         self.approach = "recordings"
@@ -23,9 +23,9 @@ class OldestDatePluginTest(unittest.TestCase):
     # Test recordings approach
 
     def test_get_work_id_from_recording(self):
-        test_recording = {"work-relation-list": [{"work": {"id": 20}}]}
+        test_recording = {"relations": [{"target-type": "work", "work": {"id": "20"}}]}
         result = self.oldestdateplugin._get_work_id_from_recording(test_recording)
-        self.assertEqual(20, result)
+        self.assertEqual("20", result)
 
     def test_extract_oldest_recording_date(self):
         recordings = [{"recording": {"id": 20}, "begin": "2020-12-12"}]
@@ -44,7 +44,7 @@ class OldestDatePluginTest(unittest.TestCase):
         self.assertEqual(expected_date, result)
 
     def test_extract_oldest_recording_date_cover(self):
-        recordings = [{"recording": {"id": 20}, "begin": "1978", "attribute-list": ["cover"]},
+        recordings = [{"recording": {"id": 20}, "begin": "1978", "attributes": ["cover"]},
                       {"recording": {"id": 20}, "begin": "1976"}]  # non-cover should be filtered out
         starting_date = DateWrapper(2022, 10, 10)
         expected_date = DateWrapper(1978)
@@ -53,7 +53,7 @@ class OldestDatePluginTest(unittest.TestCase):
 
     def test_extract_oldest_recording_date_non_cover(self):
         # cover should be filtered out
-        recordings = [{"recording": {"id": 20}, "begin": "1976", "attribute-list": ["cover"]},
+        recordings = [{"recording": {"id": 20}, "begin": "1976", "attributes": ["cover"]},
                       {"recording": {"id": 20}, "begin": "1978"}]
         starting_date = DateWrapper(2022, 10, 10)
         expected_date = DateWrapper(1978)
@@ -73,9 +73,9 @@ class OldestDatePluginTest(unittest.TestCase):
 
     def test_extract_oldest_release_date_cover(self):
         recordings = [
-            {"recording": {"id": self.recording_id}, "begin": "1978", "release-list": [{"date": "1976"}]},
-            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attribute-list": ["cover"],
-             "release-list": [{"date": "1977"}], "artist-credit": [{"artist": {"id": "artist-id"}}]}
+            {"recording": {"id": self.recording_id}, "begin": "1978", "releases": [{"date": "1976"}]},
+            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attributes": ["cover"],
+             "releases": [{"date": "1977"}], "artist-credit": [{"artist": {"id": "artist-id"}}]}
         ]
         starting_date = DateWrapper(2022, 10, 10)
         expected_date = DateWrapper(1977)
@@ -89,11 +89,11 @@ class OldestDatePluginTest(unittest.TestCase):
 
     def test_extract_oldest_release_date_non_cover(self):
         recordings = [
-            {"recording": {"id": self.recording_id}, "begin": "1978", "release-list": [{"date": "1976"}]},
-            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attribute-list": ["cover"],
-             "release-list": [{"date": "1977"}], "artist-credit": [{"artist": {"id": "artist-id"}}]},
-            {"recording": {"id": self.recording_id + 2}, "begin": "1978", "attribute-list": ["cover"],
-             "release-list": [{"date": "1975"}], "artist-credit": [{"artist": {"id": "another-id"}}]}
+            {"recording": {"id": self.recording_id}, "begin": "1978", "releases": [{"date": "1976"}]},
+            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attributes": ["cover"],
+             "releases": [{"date": "1977"}], "artist-credit": [{"artist": {"id": "artist-id"}}]},
+            {"recording": {"id": self.recording_id + 2}, "begin": "1978", "attributes": ["cover"],
+             "releases": [{"date": "1975"}], "artist-credit": [{"artist": {"id": "another-id"}}]}
         ]
         starting_date = DateWrapper(2022, 10, 10)
         expected_date = DateWrapper(1976)
@@ -108,11 +108,11 @@ class OldestDatePluginTest(unittest.TestCase):
     def test_extract_oldest_release_date_filter_recordings(self):
         self.oldestdateplugin.config['filter_recordings'] = True
         recordings = [
-            {"recording": {"id": self.recording_id}, "begin": "1978", "release-list": [{"date": "1976"}]},
-            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attribute-list": ["live"],
-             "release-list": [{"date": "1977"}], "artist-credit": [{"artist": {"id": "artist-id"}}]},
-            {"recording": {"id": self.recording_id + 2}, "begin": "1978", "attribute-list": ["cover"],
-             "release-list": [{"date": "1975"}], "artist-credit": [{"artist": {"id": "another-id"}}]}
+            {"recording": {"id": self.recording_id}, "begin": "1978", "releases": [{"date": "1976"}]},
+            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attributes": ["live"],
+             "releases": [{"date": "1977"}], "artist-credit": [{"artist": {"id": "artist-id"}}]},
+            {"recording": {"id": self.recording_id + 2}, "begin": "1978", "attributes": ["cover"],
+             "releases": [{"date": "1975"}], "artist-credit": [{"artist": {"id": "another-id"}}]}
         ]
         starting_date = DateWrapper(2022, 10, 10)
         expected_date = DateWrapper(1976)
@@ -129,11 +129,11 @@ class OldestDatePluginTest(unittest.TestCase):
         self.oldestdateplugin.config['release_types'] = ["Official"]
         recordings = [
             {"recording": {"id": self.recording_id}, "begin": "1978",
-             "release-list": [{"date": "1976", "status": "Bootleg"}]},
-            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attribute-list": ["live"],
-             "release-list": [{"date": "1977", "status": "Official"}]},
-            {"recording": {"id": self.recording_id + 2}, "begin": "1978", "attribute-list": ["cover"],
-             "release-list": [{"date": "1975"}], "artist-credit": [{"artist": {"id": "another-id"}}]}
+             "releases": [{"date": "1976", "status": "Bootleg"}]},
+            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attributes": ["live"],
+             "releases": [{"date": "1977", "status": "Official"}]},
+            {"recording": {"id": self.recording_id + 2}, "begin": "1978", "attributes": ["cover"],
+             "releases": [{"date": "1975"}], "artist-credit": [{"artist": {"id": "another-id"}}]}
         ]
         starting_date = DateWrapper(2022, 10, 10)
         expected_date = DateWrapper(1977)
@@ -150,11 +150,11 @@ class OldestDatePluginTest(unittest.TestCase):
         self.oldestdateplugin.config['approach'] = "recordings"
         recordings = [
             {"recording": {"id": self.recording_id}, "begin": "1978",
-             "release-list": [{"date": "1976", "status": "Bootleg"}]},
-            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attribute-list": ["live"],
-             "release-list": [{"date": "1977", "status": "Official"}]},
-            {"recording": {"id": self.recording_id + 2}, "begin": "1978", "attribute-list": ["cover"],
-             "release-list": [{"date": "1975"}]}
+             "releases": [{"date": "1976", "status": "Bootleg"}]},
+            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attributes": ["live"],
+             "releases": [{"date": "1977", "status": "Official"}]},
+            {"recording": {"id": self.recording_id + 2}, "begin": "1978", "attributes": ["cover"],
+             "releases": [{"date": "1975"}]}
         ]
         starting_date = DateWrapper(2022, 10, 10)
         expected_date = DateWrapper(1978)
@@ -171,11 +171,11 @@ class OldestDatePluginTest(unittest.TestCase):
         self.oldestdateplugin.config['approach'] = "releases"
         recordings = [
             {"recording": {"id": self.recording_id}, "begin": "1978",
-             "release-list": [{"date": "1976", "status": "Bootleg"}]},
-            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attribute-list": ["live"],
-             "release-list": [{"date": "1975", "status": "Official"}]},
-            {"recording": {"id": self.recording_id + 2}, "begin": "1974", "attribute-list": ["cover"],
-             "release-list": [{"date": "1975"}]}  # cover gets filtered out
+             "releases": [{"date": "1976", "status": "Bootleg"}]},
+            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attributes": ["live"],
+             "releases": [{"date": "1975", "status": "Official"}]},
+            {"recording": {"id": self.recording_id + 2}, "begin": "1974", "attributes": ["cover"],
+             "releases": [{"date": "1975"}]}  # cover gets filtered out
         ]
         starting_date = DateWrapper(2022, 10, 10)
         expected_date = DateWrapper(1975)
@@ -191,11 +191,11 @@ class OldestDatePluginTest(unittest.TestCase):
         self.oldestdateplugin.config['approach'] = "hybrid"
         recordings = [
             {"recording": {"id": self.recording_id}, "begin": "1978",
-             "release-list": [{"date": "1976", "status": "Bootleg"}]},
-            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attribute-list": ["live"],
-             "release-list": [{"date": "1975", "status": "Official"}]},
-            {"recording": {"id": self.recording_id + 2}, "begin": "1974", "attribute-list": ["cover"],
-             "release-list": [{"date": "1975"}]}  # cover gets filtered out
+             "releases": [{"date": "1976", "status": "Bootleg"}]},
+            {"recording": {"id": self.recording_id + 1}, "begin": "1978", "attributes": ["live"],
+             "releases": [{"date": "1975", "status": "Official"}]},
+            {"recording": {"id": self.recording_id + 2}, "begin": "1974", "attributes": ["cover"],
+             "releases": [{"date": "1975"}]}  # cover gets filtered out
         ]
         starting_date = DateWrapper(2022, 10, 10)
         expected_date = DateWrapper(1978)
@@ -212,11 +212,11 @@ class OldestDatePluginTest(unittest.TestCase):
         self.oldestdateplugin.config['approach'] = "hybrid"
         recordings = [
             {"recording": {"id": self.recording_id}, "begin": "",
-             "release-list": [{"date": "1976", "status": "Bootleg"}]},
-            {"recording": {"id": self.recording_id + 1}, "begin": "", "attribute-list": ["live"],
-             "release-list": [{"date": "1975", "status": "Official"}]},
-            {"recording": {"id": self.recording_id + 2}, "begin": "", "attribute-list": ["cover"],
-             "release-list": [{"date": "1975"}]}  # cover gets filtered out
+             "releases": [{"date": "1976", "status": "Bootleg"}]},
+            {"recording": {"id": self.recording_id + 1}, "begin": "", "attributes": ["live"],
+             "releases": [{"date": "1975", "status": "Official"}]},
+            {"recording": {"id": self.recording_id + 2}, "begin": "", "attributes": ["cover"],
+             "releases": [{"date": "1975"}]}  # cover gets filtered out
         ]
         starting_date = DateWrapper(2022, 10, 10)
         expected_date = DateWrapper(1975)
@@ -233,11 +233,11 @@ class OldestDatePluginTest(unittest.TestCase):
         self.oldestdateplugin.config['approach'] = "both"
         recordings = [
             {"recording": {"id": self.recording_id}, "begin": "",
-             "release-list": [{"date": "1976", "status": "Bootleg"}]},
-            {"recording": {"id": self.recording_id + 1}, "begin": "1974", "attribute-list": ["live"],
-             "release-list": [{"date": "1975", "status": "Official"}]},
-            {"recording": {"id": self.recording_id + 2}, "begin": "1973", "attribute-list": ["cover"],
-             "release-list": [{"date": "1975"}]}  # cover gets filtered out
+             "releases": [{"date": "1976", "status": "Bootleg"}]},
+            {"recording": {"id": self.recording_id + 1}, "begin": "1974", "attributes": ["live"],
+             "releases": [{"date": "1975", "status": "Official"}]},
+            {"recording": {"id": self.recording_id + 2}, "begin": "1973", "attributes": ["cover"],
+             "releases": [{"date": "1975"}]}  # cover gets filtered out
         ]
         starting_date = DateWrapper(2022, 10, 10)
         expected_date = DateWrapper(1974)
