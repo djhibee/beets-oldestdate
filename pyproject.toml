@@ -17,10 +17,10 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "mediafile~=0.9",
+    "mediafile>=0.9",
     "requests>=2.20",
-    "python-dateutil~=2.8",
-    "beets~=1.6",
+    "python-dateutil>=2.8",
+    "beets>=2.0",
 ]
 
 [tool.hatch.build.targets.wheel]
