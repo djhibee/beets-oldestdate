@@ -54,8 +54,29 @@ and `recordings` of `recording`, `works` of `work`.
 |     release_types      |     None      |                     Only consider releases with given status, e.g. `['Official']`. Usually not needed, requires fetching the releases of each recording                     |
 |     use_file_date      |     False     |                                                           Use the file's embedded date too when looking for the oldest date                                                            |
 |  max_network_retries   |       3       |                                       Maximum amount of times a given network call will be retried, using exponential backoff, before giving up.                                       |
+| show_progress | False | Print per-track progress (fetching recordings, works, releases and work scan status) instead of logging it at debug level |
+| progress_every | 1 | When `show_progress` is enabled, print the work scan status every N related recordings (first and last are always printed) |
+| max_scan_seconds | 120 | Time budget per track. When reached, the oldest valid date found so far is kept; the track is skipped only if no date was found. `0` disables the limit |
+| max_related_recordings | 200 | Work approach: scan at most this many related recordings of a work (large works are scanned partially instead of being skipped) |
+| minimum_file_year | 1000 | Embedded file years that are missing, zero or older than this are treated as unknown (never written back as `0001`) |
 
 The MusicBrainz server, `https` and rate limit settings are taken from beets' `musicbrainz` configuration.
+
+## Output
+
+After each track, the plugin prints the result, e.g.:
+
+    oldestdate: Overwriting date field for: Debbie Deb - When I Hear Music from 1995-0-0 to 1983 [work approach; elapsed: 2.4s; timed out: no]
+
+When the date is not overwritten, `oldestdate: Oldest date for: <artist> - <title> is <date> [...]` is printed instead.
+Partial MusicBrainz dates such as `2015-??-??` or `2015-07-??` are kept partial: missing month or day values are
+never invented.
+
+## Skipped tracks
+
+Tracks that could not be processed (network failures, unusable MusicBrainz data, processing errors, or a time budget
+reached without any date) are appended to `oldestdate-skipped.txt` in beets' configured `directory`, one line per
+track (`timestamp | artist - title | path | reason`), so they can be retried later with other settings.
 
 ## Command
 
