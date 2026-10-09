@@ -6,11 +6,15 @@ from typing import Optional, Any, List, Dict, Iterable, Tuple, Union
 from urllib.parse import quote_plus
 
 import mediafile
-from beets import ui, config
-from beets.autotag import hooks, TrackInfo
-from beets.importer import action, ImportTask, ImportSession
+from beets import ui, config, importer
+from beets.autotag import Distance, TrackInfo
+from beets.importer import ImportTask, ImportSession
 from beets.library import Item, Library
 from beets.plugins import BeetsPlugin
+
+action: Any = getattr(importer, 'Action', None)
+if action is None:
+    action = getattr(importer, 'action')
 
 from . import mb_api
 from .date_wrapper import DateWrapper, parse_musicbrainz_date
@@ -147,8 +151,8 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
         if 'track_id' in info:
             self._fetch_recording(info.track_id)
 
-    def track_distance(self, _: Item, info: TrackInfo) -> hooks.Distance:
-        dist = hooks.Distance()
+    def track_distance(self, _: Item, info: TrackInfo) -> Distance:
+        dist = Distance()
         if info.data_source != 'MusicBrainz':
             self._log.debug('Skipping track with non MusicBrainz data source {0.artist} - {0.title}', info)
             return dist

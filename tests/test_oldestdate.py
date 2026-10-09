@@ -7,10 +7,10 @@ from unittest.mock import patch
 
 from beets import config
 from beets.autotag import AlbumInfo, TrackInfo
-from beets.importer import action
 from beets.library import Item, Library
 
 from beetsplug import oldestdate
+from beetsplug.oldestdate import action
 from beetsplug import mb_api
 from beetsplug.date_wrapper import DateWrapper
 from tests import thriller_fixtures as fx
