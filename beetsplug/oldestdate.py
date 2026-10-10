@@ -87,7 +87,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
             'album': RELEASE,  # Approach for standard albums
             'compilation': RECORDING,  # Approach for compilations
             'album_type': {},  # Approach by album type, e.g. {soundtrack: release}. Takes priority
-            'prompt_for': [],  # Approaches for which to ask whether an item/album must be processed, e.g. [work]
+            'prompt_for': [],  # Approaches for which to confirm, change approach or skip an item/album, e.g. [work]
             'release_types': None,  # Filter by release status, e.g. ['Official']
             'use_file_date': False,  # Also use file's embedded date when looking for oldest date
             'max_network_retries': 3,  # Maximum amount of times a given network call will be retried
@@ -345,7 +345,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
     def _process_items(self, items: Iterable[Item], forced_approach: Optional[str] = None) -> None:
         """Process a group of items (an album or a singleton).
-        If the approach is listed in prompt_for, first ask whether the group must be processed."""
+        If the approach is listed in prompt_for, first ask to confirm, change approach or skip."""
         by_approach: Dict[str, List[Item]] = {}
         for item in items:
             if self._should_process(item):
@@ -353,9 +353,12 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
         prompt_for = self._prompt_for()
         for approach, approach_items in by_approach.items():
-            if approach in prompt_for and not self._confirm(approach_items, approach):
-                self._log.info('Skipping {0} item(s) as requested ({1} approach)', len(approach_items), approach)
-                continue
+            if approach in prompt_for:
+                selected_approach = self._select_approach(approach_items, approach)
+                if selected_approach is None:
+                    self._log.info('Skipping {0} item(s) as requested ({1} approach)', len(approach_items), approach)
+                    continue
+                approach = selected_approach
             for item in approach_items:
                 result = self._find_date(item, approach)
                 if result is not None:
@@ -370,10 +373,10 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
             value = [value]
         return [normalize_approach(approach) for approach in value]
 
-    def _confirm(self, items: List[Item], approach: str) -> bool:
-        """Ask the user whether the items (album or singleton) must be processed with given approach"""
+    def _select_approach(self, items: List[Item], approach: str) -> Optional[str]:
+        """Confirm or change the approach for an album or singleton, or return None to skip"""
         if config['import']['quiet'].get(bool):
-            return True
+            return approach
         first = items[0]
         if first.album_id is not None:
             description = 'album {} - {} ({} track(s))'.format(first.albumartist or first.artist, first.album,
@@ -381,8 +384,12 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
         else:
             description = 'track {} - {}'.format(first.artist, first.title)
         print('oldestdate: process {} using the {} approach?'.format(description, approach))
-        sel = ui.input_options(('Yes', 'No'))
-        return bool(sel == 'y')
+        alternatives = [(RELEASE, 'Release'), (RECORDING, 'reCording'), (WORK, 'Work')]
+        options = ['Yes'] + [label for name, label in alternatives if name != approach] + ['Skip']
+        sel = ui.input_options(options, default='y')
+        if sel == 'y':
+            return approach
+        return {'r': RELEASE, 'c': RECORDING, 'w': WORK}.get(sel)
 
     def _should_process(self, item: Item) -> bool:
         """Whether the item can and must be processed"""

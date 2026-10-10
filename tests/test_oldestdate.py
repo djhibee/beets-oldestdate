@@ -275,13 +275,13 @@ class OptionsTest(OldestDatePluginTestCase):
         self.assertTrue(self.plugin._overwrite_date('recording'))
         self.assertFalse(self.plugin._overwrite_date('work'))
 
-    @patch('beets.ui.input_options', return_value='n')
-    def test_prompt_for_no_skips_processing(self, input_options):
+    @patch('beets.ui.input_options', return_value='s')
+    def test_prompt_for_skip_skips_processing(self, input_options):
         self.plugin.config['prompt_for'] = ['work']
         self.plugin.config['singleton'] = 'work'
         item = self.make_item(singleton=True)
         self.plugin._process_file(item)
-        input_options.assert_called_once_with(('Yes', 'No'))
+        input_options.assert_called_once_with(['Yes', 'Release', 'reCording', 'Skip'], default='y')
         self.assertNotIn('recording_year', item)
         self.assertEqual([], self.mb.calls)  # Asked before any lookup
 
@@ -309,7 +309,7 @@ class OptionsTest(OldestDatePluginTestCase):
         self.plugin._process_file(item)
         input_options.assert_not_called()
 
-    @patch('beets.ui.input_options', return_value='n')
+    @patch('beets.ui.input_options', return_value='s')
     def test_prompt_for_compilation_with_singleton_alias(self, input_options):
         # Compilation processed with the recording ("singleton") approach, which requires a prompt
         self.plugin.config['compilation'] = 'singleton'
@@ -333,7 +333,7 @@ class OptionsTest(OldestDatePluginTestCase):
         input_options.assert_called_once()
         self.assertEqual([2005, 2005], [int(item.recording_year) for item in self.lib.items()])
 
-    @patch('beets.ui.input_options', return_value='n')
+    @patch('beets.ui.input_options', return_value='s')
     def test_prompt_album_on_import(self, input_options):
         self.plugin.config['prompt_for'] = ['release']
         items = self.album_items()
@@ -355,6 +355,58 @@ class OptionsTest(OldestDatePluginTestCase):
             config['import']['quiet'] = False
         input_options.assert_not_called()
         self.assertEqual(2005, item.recording_year)
+
+    @patch('beets.ui.input_', return_value='')
+    def test_prompt_default_confirms_each_approach(self, input_):
+        item = self.make_item()
+        for approach in oldestdate.APPROACHES:
+            with self.subTest(approach=approach):
+                self.assertEqual(approach, self.plugin._select_approach([item], approach))
+        self.assertEqual(3, input_.call_count)
+
+    @patch('beets.ui.input_')
+    def test_prompt_can_select_each_alternative(self, input_):
+        item = self.make_item()
+        shortcuts = {'release': 'r', 'recording': 'c', 'work': 'w'}
+        for approach in oldestdate.APPROACHES:
+            for alternative in oldestdate.APPROACHES:
+                if alternative == approach:
+                    continue
+                with self.subTest(approach=approach, alternative=alternative):
+                    input_.return_value = shortcuts[alternative]
+                    self.assertEqual(alternative, self.plugin._select_approach([item], approach))
+
+    @patch('beets.ui.input_options', return_value='w')
+    def test_prompt_changes_singleton_approach_without_changing_config(self, input_options):
+        self.plugin.config['prompt_for'] = ['recording', 'work']
+        self.plugin.config['overwrite_date'] = ['work']
+        item = self.make_item()
+        self.plugin._process_file(item)
+        input_options.assert_called_once()
+        self.assertEqual(1982, item.recording_year)
+        self.assertEqual((1982, 11, 30), (item.year, item.month, item.day))
+        self.assertEqual('recording', self.plugin._get_approach(item))
+
+    @patch('beets.ui.input_options', return_value='w')
+    def test_prompt_changes_album_approach_on_import(self, input_options):
+        self.plugin.config['prompt_for'] = ['release', 'work']
+        items = self.album_items()
+        task = mock.Mock()
+        task.imported_items.return_value = items
+        self.plugin._on_import(None, task)
+        input_options.assert_called_once()
+        self.assertEqual([1982, 1982], [item.recording_year for item in items])
+        self.assertEqual('release', self.plugin._get_approach(items[0]))
+
+    @patch('beets.ui.input_options', return_value='c')
+    def test_prompt_changes_forced_album_approach_in_command(self, input_options):
+        self.plugin.config['prompt_for'] = ['work']
+        self.album_items()
+        with patch.object(self.plugin, '_get_oldest_date', wraps=self.plugin._get_oldest_date) as lookup:
+            self.plugin._command_func(self.lib, mock.Mock(approach='work', force=None), [])
+        input_options.assert_called_once()
+        self.assertEqual(['recording', 'recording'], [call[0][1] for call in lookup.call_args_list])
+        self.assertEqual([2005, 2005], [int(item.recording_year) for item in self.lib.items()])
 
     def test_command_forced_approach(self):
         item = self.make_item(singleton=True)
