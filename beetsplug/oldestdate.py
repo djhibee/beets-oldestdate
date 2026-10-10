@@ -8,7 +8,7 @@ from urllib.parse import quote_plus
 import mediafile
 from beets import ui, config
 from beets.autotag import hooks, TrackInfo
-from beets.importer import action, ImportTask, ImportSession
+from beets.importer import Action, ImportTask, ImportSession
 from beets.library import Item, Library
 from beets.plugins import BeetsPlugin
 
@@ -186,7 +186,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
                 if track.get('data_source', 'MusicBrainz') != 'MusicBrainz' or not track.get('track_id'):
                     continue
                 if not self._prompt_missing_work_id(track, skip_option):
-                    task.choice_flag = action.SKIP
+                    task.choice_flag = Action.SKIP
                     return
         except mb_api.MusicBrainzError as e:
             self._log.error('Could not check work for {0}: {1}', task, e)
