@@ -45,7 +45,7 @@ and `recordings` of `recording`, `works` of `work`.
 |     overwrite_date     |     False     | Overwrite the date tag fields (year, month, day). `yes`/`no` for all approaches, or a list of approaches, e.g. `[release]`, so that only album dates are changed (useful for e.g. Plex)  |
 |    overwrite_month     |     True      |                                                                 If overwriting date, also overwrite month field, otherwise leave blank                                                                 |
 |     overwrite_day      |     True      |                                                                  If overwriting date, also overwrite day field, otherwise leave blank                                                                  |
-|       prompt_for       |      []       | List of approaches for which the plugin asks, before any lookup, whether the item (singleton) or album must be processed at all, e.g. `[recording, work]`. In quiet mode, items are processed without asking |
+|       prompt_for       |      []       | List of approaches for which the plugin asks, before any lookup, to confirm the current approach (default), select another approach, or skip the item (singleton) or album, e.g. `[recording, work]`. In quiet mode, items are processed with the configured approach without asking |
 |    ignore_track_id     |     False     |                                       During import, ignore existing track_id. Needed if using plugin on a library already tagged by MusicBrainz                                       |
 |    filter_on_import    |     True      |                                   During import, weight down candidates with no work_id so you are more likely to choose a recording with a work_id                                    |
 | prompt_missing_work_id |     True      |                                   During import, prompt to fix work_id if missing from chosen recording. Only applies to items using the `work` approach                                   |
@@ -82,15 +82,20 @@ track (`timestamp | artist - title | path | reason`), so they can be retried lat
 
     beet oldestdate [-a {release,recording,work}] [-f] [QUERY]
 
-`-a/--approach` forces the approach for all matched items, `-f/--force` processes items that were already processed.
-`prompt_for` also applies to the command, based on the approach used (including a forced one).
+`-a/--approach` forces the initial approach for all matched items, `-f/--force` processes items that were already processed.
+`prompt_for` also applies to the command, based on the approach used (including a forced one), and allows changing it.
 
 ## Prompting for processing
 
-With `prompt_for`, the plugin asks for confirmation before processing an item or album whose approach is listed. For
+With `prompt_for`, the plugin asks before processing an item or album whose initial approach is listed. For
 example, with `compilation: singleton` and `prompt_for: [singleton]`, importing a compilation will prompt
-`process album ... using the recording approach? [Y]es, [N]o`: answering no leaves the album untouched by the plugin.
+`process album ... using the recording approach? [Y]es, Release, Work, Skip`: pressing Enter or answering yes confirms
+the configured approach, choosing release or work changes it for this album, and skip leaves the album untouched.
+When recording is offered as an alternative, its shortcut is `C` (`reCording`), to distinguish it from release (`R`).
 The question is asked once per album (or per singleton) and only for items that would actually be processed.
+The selected approach applies to both date lookup and approach-specific settings such as `overwrite_date`; it does
+not change the configuration or prompt again for the newly selected approach. In quiet mode, the initial approach is
+used without asking.
 
 ## Example Configuration
 
