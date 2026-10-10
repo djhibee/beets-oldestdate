@@ -1,0 +1,604 @@
+####
+## Beets Configuration file.
+## ~./config/beets/config-lossless.yaml
+#####
+
+### Global Options
+library: ./musiclibrary-lossless.db
+directory: ./music-files/
+pluginpath: []
+logging:
+    format_str: false
+clutter: ["Thumbs.DB", ".DS_Store", "#recycle", "@eaDir", "*.part", ".AppleDouble"]
+ignore: [".*", "*~", "System Volume Information", "#recycle", "@eaDir", "@*", ".DS_Store*", "*.part", ".AppleDouble", ".TemporaryItems"]
+threaded: no
+per_disc_numbering: yes
+## change characters for portability
+replace:
+    '[\\/]': _
+    '^\.': _
+    '[\x00-\x1f]': _
+    '[<>:"\?\*\|]': _
+    '\.$': _
+    '\s+$': ''
+    '^\s+': ''
+    '^-': _
+    "\u2018": "'"   #  left single quote
+    "\u2019": "'"   #  right single quote
+    "\u201C": '"'   #  left double quote
+    "\u201D": '"'   #  right double quote
+    "\u2033": '"'   #   double prime
+    "\u2013": '-'   #   en dash
+    "\u2026": '...'   #   HORIZONTAL ELLIPSIS
+    "\u2400": '' # SYMBOL FOR NULL
+    
+path_sep_replace: _
+asciify_paths: true
+art_filename: cover
+timeout: 5.0
+verbose: 0
+terminal_encoding:
+original_date: no # on passe par le hook maintenant afin de garder release year pour le path
+id3v23: no
+va_name: "Various Artists"
+duplicate_verbose_prompt: yes
+
+plugins: [
+  ## metadata plugins
+  musicbrainz,
+  #discogs,
+  fromfilename,
+  #artistcountry,  
+  oldestdate, 
+  types,
+  albumtypes, 
+  zero,
+  originquery,  # Use gazelle origin export to help search match the downloaded version
+  importsource, #add original media files paths in  source_path field. Good to identify converted items!!
+  edit,  # pour modifier les metadata a la main depuis vi
+  
+  ## path format plugins
+  inline,
+  ftintitle,
+  advancedrewrite,
+  substitute,
+  #bucket,
+  
+  ## interoperability plugins
+  convert,
+
+  # DB quality plugins
+  replace,
+  
+  ## Beets command enhancement plugins
+  bareasc, #searches your library using simple ASCII character matching
+  fuzzy, #use fuzzy pattern matching. This can be useful if you want to find a track with complicated characters in the title.
+  #fish #autocompletion
+  info,  #dumps the current tag values for any file format supported by beets
+  
+  ## misc plugins
+  filetote, # #copy non music files also. nice mix of copyartifacts and extrafiles 
+  importfeeds,
+  
+]
+
+import:
+    write: yes #yes
+    copy: yes
+    move: no #yes
+    link: no
+    delete: no
+    resume: ask
+    incremental: no
+    quiet_fallback: asis
+    none_rec_action: ask
+    timid: yes #yes
+    log: ./untaggableFiles-lossless.log
+    autotag: yes #yes except for generique import
+    quiet: no #no
+    singletons: no
+    default_action: apply
+    languages: [fr, en]
+    detail: no
+    flat: no
+    group_albums: no
+    pretend: false
+    searchlimit: 5
+    search_ids: []
+    bell: yes
+
+
+ui:
+    terminal_width: 80
+    length_diff_thresh: 10.0
+    color: yes
+
+format_item: $artist - $albumartist - $album - $title - $path
+format_album: $albumartist - $album - $path
+time_format: '%Y-%m-%d'
+#time_format: '%Y-%m-%d %H:%M:%S'
+format_raw_length: no
+
+sort_album: albumartist+ album+
+sort_item: artist+ album+ disc+ track+
+sort_case_insensitive: yes
+
+aunique:
+    keys: albumartist album
+    disambiguators: year albumtype label catalognum barcode albumdisambig releasegroupdisambig
+    bracket: '[]'
+
+# ATTENTION!!! Ne pas modifier dans tous les sens car la config est update par importNewAlbum.sh!!!
+paths:
+    #isCompilSamba:true: Compilations/Compil' Samba/$artist ($artist_country) - $album - $title [$the_path_year]
+    singleton: Compilations/Vrac/$artist ($artist_country) - $title [$the_path_year]
+    genre:Generique Dessin Anime: Compilations/Generiques Dessins Animes/$title $the_generique_artist
+    genre:Generique Serie TV: Compilations/Generiques Series TV/$title $the_generique_artist
+    # pour compil generiques
+    #comp: Compilations/Generiques Dessins Animes/$title $the_generique_artist
+    #comp: Compilations/Generiques Series TV/$title $the_generique_artist
+    #albumtypes::soundtrack: Compilations/Soundtrack - $album%aunique{} [$the_path_year]%if{${label}${barcode}, {}${label}%if{${label},%if{${barcode},$,}}${barcode}%if{${label}${barcode},$}}[${album_quality}]/$the_disk_track $artist - $title
+    #Ex. Compilations/Soundtrack - Pulp Fiction {US, MCA Records, MCAD-11103}[FLAC 16bit 44.1kHz]/01 Dick Dale - Misirlou.flac
+    albumtypes::soundtrack: "Compilations/Soundtrack - $album%aunique{} [$the_path_year]%if{${country}${label}${catalognum}${barcode}, {%if{${country},${country},}%if{${label},%if{${country},$,}%left{${label},15},}%if{${catalognum},%if{${country}${label},$,}${catalognum},%if{${barcode},%if{${country}${label},$,}${barcode},}}}[${album_quality}]/$the_disk_track $artist - $title"
+    #albumtype:soundtrack: Compilations/Soundtrack - $album%aunique{} [$the_path_year]%if{${label}${barcode}, {}${label}%if{${label},%if{${barcode},$,}}${barcode}%if{${label}${barcode},$}}[${album_quality}]/$the_disk_track $artist - $title
+    albumtypes:soundtrack: "Compilations/Soundtrack - $album%aunique{} [$the_path_year]%if{${country}${label}${catalognum}${barcode}, {%if{${country},${country},}%if{${label},%if{${country},$,}%left{${label},15},}%if{${catalognum},%if{${country}${label},$,}${catalognum},%if{${barcode},%if{${country}${label},$,}${barcode},}}}[${album_quality}]/$the_disk_track $artist - $title"
+
+    #genre:Classical: Musique_Classique/%if{$is_single_composer, [%first{$the_classical_artist,1,0,$,,_}]}[%left{$albumartist,90}] $album%aunique{}%if{${label}${barcode}, {}${label}%if{${label},%if{${barcode},$,}}${barcode}%if{${label}${barcode},$}}[${album_quality}]/$the_disk_track $the_composer $title
+    #Ex. Musique_Classique/[Vivaldi][Antonio Vivaldi] Les Quatre Saisons {XE, Deutsche Grammo, 415 301-2}[FLAC 16bit 44.1kHz]/01 Antonio Vivaldi Concerto No. 1 in E major, Op. 8, RV 269, "La primavera" (Spring): I. Allegro.flac
+
+    genre:Classical: "Musique_Classique/%if{$is_single_composer, [%first{$the_classical_artist,1,0,$,,_}]}[%left{$albumartist,90}] $album%aunique{}%if{${country}${label}${catalognum}${barcode}, {%if{${country},${country},}%if{${label},%if{${country},$,}%left{${label},15},}%if{${catalognum},%if{${country}${label},$,}${catalognum},%if{${barcode},%if{${country}${label},$,}${barcode},}}}[${album_quality}]/$the_disk_track $the_composer $title"
+    #genre:Opera: Musique_Classique/%if{$is_single_composer, [%first{$the_classical_artist,1,0,$,,_}]}[%left{$albumartist,90}] $album%aunique{}%if{${label}${barcode}, {}${label}%if{${label},%if{${barcode},$,}}${barcode}%if{${label}${barcode},$}}[${album_quality}]/$the_disk_track $the_composer $title
+    genre:Opera: "Musique_Classique/%if{$is_single_composer, [%first{$the_classical_artist,1,0,$,,_}]}[%left{$albumartist,90}] $album%aunique{}%if{${country}${label}${catalognum}${barcode}, {%if{${country},${country},}%if{${label},%if{${country},$,}%left{${label},15},}%if{${catalognum},%if{${country}${label},$,}${catalognum},%if{${barcode},%if{${country}${label},$,}${barcode},}}}[${album_quality}]/$the_disk_track $the_composer $title"
+
+    #comp: Compilations/$album%aunique{} [$the_path_year]%if{${label}${barcode}, {}${label}%if{${label},%if{${barcode},$,}}${barcode}%if{${label}${barcode},$}}[${album_quality}]/$the_disk_track $artist - $title
+    #Ex.  Compilations/Top of the Pops 1994 {UK, Telstar, TCD 2740}[FLAC 16bit 44.1kHz]/01 Wet Wet Wet - Love Is All Around.flac
+    comp: "Compilations/$album%aunique{} [$the_path_year]%if{${country}${label}${catalognum}${barcode}, {%if{${country},${country},}%if{${label},%if{${country},$,}%left{${label},15},}%if{${catalognum},%if{${country}${label},$,}${catalognum},%if{${barcode},%if{${country}${label},$,}${barcode},}}}[${album_quality}]/$the_disk_track $artist - $title"
+
+    #default: "%substitute{${albumartist}} ($artist_country)/[$the_path_year] $album%aunique{}%if{${label}${barcode}, {}${label}%if{${label},%if{${barcode},$,}}${barcode}%if{${label}${barcode},$}}%if{${albumtypes}, ${atypes}}[${album_quality}]/$the_disk_track $title"
+    #Ex. .../ [1972] Something/Anything? {1984, XE, Mobile Fidelity, CDEPC 85930} [FLAC 16bit 44.1kHz]
+    default: "%substitute{${albumartist}} ($artist_country)/[$the_path_year] $album%aunique{}%if{${release_version_year}${country}${label}${catalognum}${barcode}, {%if{${release_version_year},${release_version_year},}%if{${country},%if{${release_version_year},$,}${country},}%if{${label},%if{${release_version_year}${country},$,}%left{${label},15},}%if{${catalognum},%if{${release_version_year}${country}${label},$,}${catalognum},%if{${barcode},%if{${release_version_year}${country}${label},$,}${barcode},}}}[${album_quality}]/$the_disk_track $title"
+
+    
+    #ext:log: $albumpath/$albumartist - $album
+    #ext:cue: $albumpath/$albumartist - $album
+    #ext:jpg: $albumpath/scans/scan
+    #ext:bmp: $albumpath/scans/scan
+    #ext:png: $albumpath/scans/scan
+    #ext:txt: $albumpath/readme
+    #ext:pdf: $albumpath/readme
+
+statefile: state.pickle.lossless #state.pickle
+
+musicbrainz:
+    host: musicbrainz.org
+    ratelimit: 1
+    ratelimit_interval: 1.0
+    searchlimit: 5
+    data_source_mismatch_penalty: 0.3 #TODO REview if necessary to compare data sources
+    external_ids:
+        discogs: yes
+    extra_tags: [barcode, catalognum, country, label, media, year]
+
+match:
+    strong_rec_thresh: 0.08
+    medium_rec_thresh: 0.30
+    rec_gap_thresh: 0.25
+    max_rec:
+        missing_tracks: medium
+        unmatched_tracks: medium
+    distance_weights:
+        artist: 3.0
+        album: 3.0
+        media: 1.0
+        mediums: 1.0
+        year: 1.0
+        country: 0.5
+        label: 0.5
+        catalognum: 0.5
+        albumdisambig: 0.5
+        album_id: 5.0
+        tracks: 2.0
+        missing_tracks: 0.9
+        unmatched_tracks: 0.6
+        track_title: 3.0
+        track_artist: 2.0
+        track_index: 1.0
+        track_length: 2.0
+        track_id: 5.0
+    preferred:
+        countries: []
+        media: ['CD','Vinyl','Digital Media|File', 'File']
+        original_year: no #yes
+    ignored: [unmatched_tracks]
+    required: []
+    track_length_grace: 10
+    track_length_max: 40
+
+
+fetchart:
+    auto: yes
+    cautious: true
+    minwidth: 300
+    quality: 100
+    maxwidth: 1200
+    enforce_ratio: 15% #50px #yes #5%
+    store_source: yes
+    fetch_for_asis: true
+    sources:
+      - filesystem
+      - coverart: release
+      - itunes
+      - coverart: releasegroup
+      - amazon
+      - albumart
+      - '*'
+
+lyrics:
+    auto: yes
+    force: no
+    sources: lrclib google musixmatch lrcmux #tekstowo genius
+    google_engine_ID: 009217259823014548361:lndtuqkycfu
+    print: yes
+    keep_synced: true
+    synched: yes
+
+embedart:
+    auto: yes
+    maxwidth: 600
+    ifempty: yes
+    compare_threshold: 20
+    remove_art_file: no
+
+lastgenre:
+    auto: yes
+    canonical: /var/services/homes/djhibee/.config/beets/genres-tree.yaml
+    fallback: ''
+    min_weight: 30
+    source: track
+    count: 4
+    force: yes
+    keep_existing: yes
+    # to be interpreted correctly as Synology audio station multi genre
+    #separator: ';'  # no more used since genres are now stored as a list in the genres field and written to files as individual genre tags
+    prefer_specific: yes
+    whitelist: /var/services/homes/djhibee/.config/beets/music-genres.txt
+
+chroma:
+    auto: yes #no
+
+zero:
+    fields: comments #month day
+    comments: [EAC, LAME, from.+collection, 'ripped by' , 'Processed by']
+
+filetote:
+    duplicate_action: merge
+    paths:
+      paired_ext:.lrc: $albumpath/$medianame_new
+      pattern:artworkdir: $albumpath/Artwork/$old_filename
+      pattern:other: $albumpath/$subpath/$old_filename
+    pairing:
+        enabled: true
+        extensions: .lrc
+    patterns:
+      artworkdir:
+        - "[aA]rtwork/"
+        - "[sS]cans/"
+      other:
+        - "**/*.*" 
+    extensions: .jpg .bmp .txt .pdf .png .log .cue .lrc .txt .yaml
+    exclude:
+        filenames: "copyright.txt"
+    print_ignored: yes
+    
+
+extrafiles:
+    patterns:
+        #artworkdir:
+        #  - '[sS]cans/'
+        #  - '[aA]rtwork/'
+        all: '*.*'
+        #bonus: '*.(jpg|bmp|txt|pdf|png|log|cue)'
+    paths:
+        artworkdir: $albumpath/artwork
+
+
+
+
+duplicates:
+    keys: [artist,title]
+    album: no
+    checksum: ''
+    copy: ''
+    count: no
+    delete: no
+    format: ''
+    full: yes
+    merge: no
+    move: ''
+    path: no
+    tiebreak: {}
+    strict: no
+    tag: ''
+
+importfeeds:
+    absolute_path: yes
+    formats: m3u_multi
+    dir: ./imports-lossless/
+    relative_to: $directory
+    m3u_name: newfiles.m3u
+
+ftintitle:
+   auto: yes
+
+echonest:
+    apikey:
+    auto: yes
+    upload: yes
+    convert: no
+    truncate: no
+
+keyfinder:
+  auto: yes
+  #bin: /Applications/KeyFinder.app/Contents/MacOS/KeyFinder
+
+oldestdate:
+  auto: yes
+  force: yes
+  use_file_date: yes
+
+  singleton: recording
+  album: release
+  compilation: work
+  album_type:
+    soundtrack: release
+    live: release
+  overwrite_date: false # [release]
+  prompt_for: [work]
+  ignore_track_id: no
+  filter_on_import: no
+  prompt_missing_work_id: yes
+  filter_recordings: yes
+
+
+convert:
+    dest: ./convertedByBeets
+    copy_album_art: yes
+    album_art_maxwidth: 800
+    never_convert_lossy_files: yes
+    #pretend: no
+    #threads: 1
+    format: mp3
+    formats:
+        aac:
+            command: ffmpeg -i $source -y -vn -acodec aac -aq 1 $dest
+            extension: m4a
+        alac:
+            command: ffmpeg -i $source -y -vn -acodec alac $dest
+            extension: m4a
+        flac: ffmpeg -i $source -y -vn -acodec flac $dest
+        #mp3: ffmpeg -i $source -y -vn -aq 0 $dest
+        mp3: /var/services/homes/djhibee/NAS-Synology/scripts/encodeToGapLessMp3.sh $source $dest
+        opus: ffmpeg -i $source -y -vn -acodec libopus -ab 96k $dest
+        ogg: ffmpeg -i $source -y -vn -acodec libvorbis -aq 3 $dest
+        wma: ffmpeg -i $source -y -vn -acodec wmav2 -vn $dest
+    max_bitrate: 500
+    auto: no #no
+    #tmpdir:
+    quiet: false # false
+    embed: yes
+    #paths: {}
+
+types:
+  rating: int
+  live: bool
+  vrac: bool
+  compilSamba: bool
+  release_date_backup: date
+
+album_fields:
+    the_path_year: |
+        if original_year:
+          return original_year
+        elif year:
+          return year
+        else:
+          return "xxxx"
+    is_not_various_artists: |
+        if albumartist == "Various Artists":
+          return 0
+        else:
+          return 1 
+    is_single_composer: |
+        initial_composer = ""
+        if items and items[0].composers:
+           initial_composer = items[0].composers[0]
+        if ( initial_composer == "" )  or (initial_composer == "Various Artists"):
+          return 0
+        for item in items:
+            if item.composers and item.composers[0] != initial_composer:
+              return 0;
+        return 1       
+    bitrate: |
+        total = 0
+        for item in items:
+            total += item.bitrate
+        return round(total / len(items))
+      
+    # Produces the "[16-44 FLAC]" string.
+    album_quality: |
+        qual = ""
+        if len(set([item.format for item in items])) != 1 or len(set([item.bitdepth for item in items])) != 1 or len(set([item.samplerate for item in items])) != 1:
+            qual += "[MUTT]"
+        i = items[0]
+        if i.format == "MP3":
+            if i.bitrate_mode:
+                qual += f"MP3 {i.bitrate_mode}"
+            qual += f"MP3"
+        else:
+            qual += f"{i.format} {i.bitdepth}-{i.samplerate // 1000}"
+        return qual
+        
+    release_version_year: |
+       from datetime import datetime
+       backup_timestamp = db_obj._values_flex.get('release_date_backup')
+       if backup_timestamp:
+         return datetime.fromtimestamp(backup_timestamp).year 
+       return year
+        
+
+item_fields:
+    the_composer: |
+      if composers:
+        return "- " + composers[0] + " -"
+      elif artist:
+        return "- " + artist + " -"
+      else:
+        return ""
+
+    the_disk_track: f"{disc}-{track:02d}" if disctotal > 1 else f"{track:02d}"
+
+    the_classical_artist: |
+      if comp:
+        return albumartist
+      else:
+        if composers:
+          return composers[0]
+        elif albumartist:
+            return albumartist
+        else:
+          return ""
+
+    the_path_year: |
+        if original_year:
+          return original_year
+        elif year:
+          return year
+        else:
+          return "xxxx"
+          
+    the_generique_artist: |
+        if artist:
+          return " (" + artist + ")" 
+        else:
+          return ""
+    
+    release_version_year: |
+      from datetime import datetime
+      # On va lire directement dans le dictionnaire des champs flexibles stockes en BDD
+      backup_timestamp = db_obj._values_flex.get('release_date_backup')
+      if backup_timestamp:
+        return datetime.fromtimestamp(backup_timestamp).year
+      return year
+        
+    
+
+          
+playlist:
+    auto: yes # yes Update playlists in the playlist directory automatically every time an item is moved or deleted
+
+badfiles:
+  commands:
+    flac: flac --test --warnings-as-errors --silent
+    
+unimported:
+    ignore_extensions: jpg png jpeg cue log txt pdf lrc nfo JPG DS_Store tsv m3u8 m3u no_image bak accurip playlist html bmp
+    ignore_subdirectories: "@eaDir" 
+ 
+deezer:   
+    data_source_mismatch_penalty: 0.6
+
+spotify:
+    data_source_mismatch_penalty: 0.9
+    mode: list # Print out the playlist as a list of links. This list can then be pasted in to a new or existing Spotify playlist.
+    region_filter: FR,US,GB,AU
+    show_failures: on
+    tiebreak: first
+
+    regex: [
+        {
+            field: "title",
+            search: "ft.",
+            replace: "feat."
+        }
+    ]
+
+fuzzy:
+    threshold: 0.75
+    prefix: '~'
+    
+albumtypes:
+    types:
+        - ep: 'EP'
+        - single: 'Single'
+        - live: 'Live'
+        - compilation: 'Anthology'
+        - remix: 'Remix'
+    ignore_va: compilation ep single remix
+    bracket: '[]'
+    
+advancedrewrite:
+  - albumartist Bruno Mars, Anderson .Paak, Silk Sonic: "Silk Sonic (Bruno Mars)"
+  #- albumartist .*Silk Sonic.*: "Bruno Mars"        
+  
+substitute:
+    # Bob Dylan and The Band -> Bob Dylan
+    # Neil Young & Crazy Horse -> Neil Young
+    # James Yorkston, Nina Persson & The Second Hand Orchestra -> James Yorkston
+    #^(.*?)(,| &| and|;).*: \1
+    Ben Harper with Charlie Musselwhite: Ben Harper
+    ^(.*?)( feat(\.|uring)).*: \1
+    ^(.*?)( ft.).*: \1
+  
+originquery:
+    origin_file: origin.yaml
+    use_origin_on_conflict: no #yes later
+    tag_patterns:
+        media: '$.Media'
+        year: '$."Edition year"'
+        label: '$."Record label"'
+        catalognum: '$."Catalog number"'
+        albumdisambig: '$.Edition'
+        #country: 'country=(.+)'
+        
+discogs:
+    user_token: "OyLDdfvFNlRMlxPIbWFCDkqHfRbQQKjkysWMOcxj"
+    separator: ';'
+    featured_string: ft.
+    data_source_mismatch_penalty: 0.3
+    extra_tags: [barcode, catalognum, country, label, media, year]
+    
+autobpm:
+    auto: yes
+    force: no
+    beat_track_kwargs: {}
+    quiet: no
+    
+fetchart_extra:
+  #fanarttv_key: YOUR_FANARTTV_API_KEY
+  theaudiodb_key: 123
+  sources: [theaudiodb, musicbrainz]
+  types: [discart,spine, back]
+  artwork_dir: "Artwork_auto"
+  run_on_import: yes
+  resize:
+    enabled: no
+    discart: [1000, 1000]
+    back: [750, 750]
+    spine: [35, 700]
+  fuzz: 15%
+  background:
+    multi_corner: no
+    
+hook:
+    hooks:
+        - event: album_imported
+          command: "beet modify -y -A id:{album.id} year={album.original_year}"
+          
+originaldateextended:
+    singleton: yes
+    singleton_overwrite_date: yes
+    compilation_as_tracks: no
+    confirm: yes
+
+artistcountry:
+     artist_additional_folders: [/var/services/homes/djhibee/git_clones/beets-oldestdate/tests/music-files/]
