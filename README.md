@@ -125,7 +125,7 @@ live recordings) are skipped if `filter_recordings` is enabled.
 This only applies to items processed with the `work` approach. If the chosen recording has no Work associated with it, the plugin cannot do its job. This is where `filter_on_import`
 comes in: it applies a negative score to tracks that don't have an associated work so they are much less likely to be
 chosen. However, this means some of the displayed tracks will be irrelevant. Thus, setting the `searchlimit` to 20 or so
-tracks is needed to hit the one recording that *does* have a work. This happens to work quite well with famous songs
+tracks may be needed to hit the one recording that *does* have a work. This happens to work quite well with famous songs
 because there is usually a single recording with an associated work that is the original recording, and thus the oldest.
 If we match with this one, the other recordings that we can't get to because they are not associated with the same work
 are irrelevant, because we already have the oldest date.
