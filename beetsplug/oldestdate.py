@@ -1,5 +1,6 @@
 import datetime
 import os
+import re
 import threading
 import time
 from typing import Optional, Any, List, Dict, Iterable, Tuple, Union
@@ -139,6 +140,9 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
         recording_date_command.parser.add_option(
             '-f', '--force', dest='force', action='store_true', default=None,
             help='process items even if they have already been processed')
+        recording_date_command.parser.add_option(
+            '--restore', action='store_true', default=False,
+            help='restore date fields from release_date_backup without MusicBrainz lookups')
         recording_date_command.func = self._command_func
         return [recording_date_command]
 
@@ -320,6 +324,14 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
     def _command_func(self, lib: Library, opts: Any, args: List[str]) -> None:
         """This queries the local database, not the files."""
+        if opts.restore:
+            if opts.approach is not None or opts.force is not None:
+                raise ui.UserError('--restore cannot be combined with --approach or --force')
+            self._importing = False
+            for item in lib.items(args):
+                self._restore_date(item)
+            return
+
         forced_approach = None
         if opts.approach:
             try:
@@ -337,6 +349,27 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
             groups.setdefault(key, []).append(item)
         for items in groups.values():
             self._process_items(items, forced_approach)
+
+    def _restore_date(self, item: Item) -> None:
+        backup = item.get('release_date_backup')
+        if backup is None:
+            return
+        try:
+            if not isinstance(backup, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', backup):
+                raise ValueError('expected YYYY-MM-DD')
+            year, month, day = (int(component) for component in backup.split('-'))
+            if not 0 <= month <= 12 or not 0 <= day <= 31:
+                raise ValueError('invalid month or day')
+            if month and day:
+                datetime.date(year or 2000, month, day)
+        except ValueError:
+            self._log.warning('Skipping malformed release_date_backup for: {0.artist} - {0.title}: {1}', item, backup)
+            return
+
+        item.year, item.month, item.day = year, month, day
+        item.store()
+        item.write()
+        ui.print_('oldestdate: Restored date for: {} - {} to {}'.format(item.artist, item.title, backup))
 
     def _on_import(self, _: ImportSession, task: ImportTask) -> None:
         if self.config['auto']:

@@ -90,6 +90,15 @@ track (`timestamp | artist - title | path | reason`), so they can be retried lat
 `-a/--approach` forces the initial approach for all matched items, `-f/--force` processes items that were already processed.
 `prompt_for` also applies to the command, based on the approach used (including a forced one), and allows changing it.
 
+To restore backed-up release dates:
+
+    beet oldestdate --restore [QUERY]
+
+This restores `year`, `month` and `day` from `release_date_backup` for matching items, saves them to the
+library and writes the file tags without MusicBrainz lookups or approach prompts. Zero components remain
+unknown. Items without a backup are skipped; malformed backups produce a warning and are left untouched.
+The backup and `recording_*` fields are preserved. `--restore` cannot be combined with `--approach` or `--force`.
+
 ## Prompting for processing
 
 With `prompt_for`, the plugin asks before processing an item or album whose initial approach is listed. For
