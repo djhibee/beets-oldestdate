@@ -72,6 +72,11 @@ When the date is not overwritten, `oldestdate: Oldest date for: <artist> - <titl
 Partial MusicBrainz dates such as `2015-??-??` or `2015-07-??` are kept partial: missing month or day values are
 never invented.
 
+When `overwrite_date` applies to an item, its current `year`, `month` and `day` fields are saved before
+overwriting in the text flexible attribute `release_date_backup` in the beets library. The format is
+`YYYY-MM-DD`, with zeroes for unknown components (e.g. `2005-00-00`). Each overwrite updates the backup
+to the date being replaced; processing without overwriting leaves the backup untouched.
+
 ## Skipped tracks
 
 Tracks that could not be processed (network failures, unusable MusicBrainz data, processing errors, or a time budget
@@ -84,6 +89,15 @@ track (`timestamp | artist - title | path | reason`), so they can be retried lat
 
 `-a/--approach` forces the initial approach for all matched items, `-f/--force` processes items that were already processed.
 `prompt_for` also applies to the command, based on the approach used (including a forced one), and allows changing it.
+
+To restore backed-up release dates:
+
+    beet oldestdate --restore [QUERY]
+
+This restores `year`, `month` and `day` from `release_date_backup` for matching items, saves them to the
+library and writes the file tags without MusicBrainz lookups or approach prompts. Zero components remain
+unknown. Items without a backup are skipped; malformed backups produce a warning and are left untouched.
+The backup and `recording_*` fields are preserved. `--restore` cannot be combined with `--approach` or `--force`.
 
 ## Prompting for processing
 
