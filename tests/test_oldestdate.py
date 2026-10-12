@@ -257,6 +257,46 @@ class OptionsTest(OldestDatePluginTestCase):
         self.plugin.config['singleton'] = 'work'
         self.plugin._process_file(item)
         self.assertEqual((1982, 11, 30), (item.year, item.month, item.day))
+        self.assertEqual('2005-10-17', item['release_date_backup'])
+        item.load()
+        self.assertEqual('2005-10-17', item['release_date_backup'])
+
+    def test_overwrite_date_backs_up_partial_dates(self):
+        self.plugin.config['overwrite_date'] = True
+        for year, month, day, backup in (
+                (2005, 10, 0, '2005-10-00'),
+                (2005, 0, 0, '2005-00-00'),
+                (0, 0, 0, '0000-00-00')):
+            with self.subTest(backup=backup):
+                item = self.make_item(year=year, month=month, day=day)
+                self.plugin._apply_date(item, DateWrapper(1982, 11, 30), 'recording')
+                self.assertEqual(backup, item['release_date_backup'])
+
+    def test_overwrite_date_backs_up_cleared_month_and_day(self):
+        self.plugin.config['overwrite_date'] = True
+        self.plugin.config['overwrite_month'] = False
+        self.plugin.config['overwrite_day'] = False
+        item = self.make_item()
+        self.plugin._apply_date(item, DateWrapper(1982, 11, 30), 'recording')
+        self.assertEqual((1982, 0, 0), (item.year, item.month, item.day))
+        self.assertEqual('2005-10-17', item['release_date_backup'])
+
+    def test_no_backup_without_overwrite(self):
+        item = self.make_item()
+        self.plugin._process_file(item)
+        self.assertNotIn('release_date_backup', item)
+
+    def test_existing_backup_is_untouched_without_overwrite(self):
+        item = self.make_item(release_date_backup='1999-01-02')
+        self.plugin._process_file(item)
+        self.assertEqual('1999-01-02', item['release_date_backup'])
+
+    def test_backup_is_updated_on_each_overwrite(self):
+        self.plugin.config['overwrite_date'] = True
+        item = self.make_item(release_date_backup='1999-01-02')
+        self.plugin._apply_date(item, DateWrapper(1982, 11, 30), 'recording')
+        self.plugin._apply_date(item, DateWrapper(1980), 'recording')
+        self.assertEqual('1982-11-30', item['release_date_backup'])
 
     def test_overwrite_date_only_for_release_approach(self):
         self.plugin.config['overwrite_date'] = ['release']
@@ -265,10 +305,12 @@ class OptionsTest(OldestDatePluginTestCase):
         self.plugin._process_file(singleton)
         self.assertEqual(1982, singleton.recording_year)
         self.assertEqual((2005, 10, 17), (singleton.year, singleton.month, singleton.day))  # Untouched
+        self.assertNotIn('release_date_backup', singleton)
 
         album_item = self.make_item(singleton=False, year=2010)
         self.plugin._process_file(album_item)
         self.assertEqual(2005, album_item.year)  # Overwritten
+        self.assertEqual('2010-10-17', album_item['release_date_backup'])
 
     def test_overwrite_date_single_approach_string(self):
         self.plugin.config['overwrite_date'] = 'recording'

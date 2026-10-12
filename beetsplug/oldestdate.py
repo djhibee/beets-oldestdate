@@ -503,6 +503,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
         # Write over the date tag if configured as YYYYMMDD
         if self._overwrite_date(approach):
+            item['release_date_backup'] = '{:04d}-{:02d}-{:02d}'.format(item.year, item.month, item.day)
             self._log.warning('Overwriting date field for: {0.artist} - {0.title} from {0.year}-{0.month}-{0.day} '
                               'to {1} [{2}]', item, format_date(oldest_date), summary)
             item.year = str(oldest_date.y).zfill(4)
