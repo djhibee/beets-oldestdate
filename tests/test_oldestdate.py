@@ -501,7 +501,7 @@ class RestoreDateTest(OldestDatePluginTestCase):
         item.load()
         self.assertEqual((2005, 10, 17), (item.year, item.month, item.day))
         self.assertEqual('2005-10-17', item['release_date_backup'])
-        self.assertEqual((1982, 11, 30), (item.recording_year, item.recording_month, item.recording_day))
+        self.assertEqual((1982, 11, 30), (int(item.recording_year), int(item.recording_month), int(item.recording_day)))
         self.item_write.assert_called_once()
 
     def test_restores_partial_and_unknown_dates(self):
