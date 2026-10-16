@@ -183,12 +183,14 @@ class ThrillerApproachesTest(OldestDatePluginTestCase):
     def test_process_file_per_approach(self):
         self.plugin.config['album_type'] = {'live': 'work'}
         singleton = self.make_item(singleton=True)
-        album_item = self.make_item(singleton=False)
+        album_item = self.make_item(singleton=False, original_month=5, original_day=3)
         work_item = self.make_item(singleton=False, albumtypes=['album', 'live'])
         for item in (singleton, album_item, work_item):
             self.plugin._process_file(item)
         self.assertEqual(2005, singleton.recording_year)
-        self.assertEqual(2005, album_item.recording_year)
+        self.assertEqual((2005, 0, 0), (album_item.original_year, album_item.original_month,
+                                        album_item.original_day))
+        self.assertNotIn('recording_year', album_item)  # Release approach uses original_* fields
         self.assertEqual(1982, work_item.recording_year)
         self.assertEqual(11, work_item.recording_month)
         self.assertEqual(30, work_item.recording_day)
@@ -373,7 +375,8 @@ class OptionsTest(OldestDatePluginTestCase):
         self.album_items()
         self.plugin._command_func(self.lib, mock.Mock(approach=None, force=None, restore=False), [])
         input_options.assert_called_once()
-        self.assertEqual([2005, 2005], [int(item.recording_year) for item in self.lib.items()])
+        self.assertEqual([2005, 2005], [item.original_year for item in self.lib.items()])
+        self.assertTrue(all('recording_year' not in item for item in self.lib.items()))
 
     @patch('beets.ui.input_options', return_value='s')
     def test_prompt_album_on_import(self, input_options):

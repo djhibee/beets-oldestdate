@@ -525,12 +525,18 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
     def _apply_date(self, item: Item, oldest_date: DateWrapper, approach: str,
                     elapsed: float = 0.0, timed_out: bool = False) -> None:
-        if oldest_date.y is not None:
-            item['recording_year'] = oldest_date.y
-        if oldest_date.m is not None:
-            item['recording_month'] = oldest_date.m
-        if oldest_date.d is not None:
-            item['recording_day'] = oldest_date.d
+        if approach == RELEASE:
+            # Release approach finds the album's original date: use beets' built-in original_* fields
+            item.original_year = oldest_date.y or 0
+            item.original_month = oldest_date.m or 0
+            item.original_day = oldest_date.d or 0
+        else:
+            if oldest_date.y is not None:
+                item['recording_year'] = oldest_date.y
+            if oldest_date.m is not None:
+                item['recording_month'] = oldest_date.m
+            if oldest_date.d is not None:
+                item['recording_day'] = oldest_date.d
 
         summary = '{} approach; elapsed: {:.1f}s; timed out: {}'.format(approach, elapsed, 'yes' if timed_out else 'no')
 

@@ -2,9 +2,11 @@
 
 Beets plugin that fetches oldest recording or release date for each track. This is especially useful when tracks are
 from best-of compilations, remasters, or re-releases. Originally based on `beets-recordingdate` by tweitzel, but almost
-entirely rewritten to actually work with MusicBrainz's incomplete information. The found date is stored in the
-`recording_year`, `recording_month` and `recording_day` tags, for compatibility with `beets-recordingdate`, and can
-optionally overwrite the date tags.
+entirely rewritten to actually work with MusicBrainz's incomplete information. With the `recording` and `work`
+approaches, the found date is stored in the `recording_year`, `recording_month` and `recording_day` tags, for
+compatibility with `beets-recordingdate`. With the `release` approach, it is stored in beets' standard
+`original_year`, `original_month` and `original_day` fields (unknown month or day are set to 0). The date tags can
+optionally be overwritten too.
 
 # Installation
 
@@ -49,7 +51,7 @@ and `recordings` of `recording`, `works` of `work`.
 |    ignore_track_id     |     False     |                                       During import, ignore existing track_id. Needed if using plugin on a library already tagged by MusicBrainz                                       |
 |    filter_on_import    |     True      |                                   During import, weight down candidates with no work_id so you are more likely to choose a recording with a work_id                                    |
 | prompt_missing_work_id |     True      |                                   During import, prompt to fix work_id if missing from chosen recording. Only applies to items using the `work` approach                                   |
-|         force          |     False     |                                                          Run even if `recording_` tags have already been applied to the track                                                          |
+|         force          |     False     |                                                          Run even if `recording_` tags have already been applied to the track (items using the `release` approach are always processed)                                                          |
 |   filter_recordings    |     True      |                                        `work` approach: skip recordings that have attributes (usually live recordings) |
 |     release_types      |     None      |                     Only consider releases with given status, e.g. `['Official']`. Usually not needed, requires fetching the releases of each recording                     |
 |     use_file_date      |     False     |                                                           Use the file's embedded date too when looking for the oldest date                                                            |
@@ -97,7 +99,7 @@ To restore backed-up release dates:
 This restores `year`, `month` and `day` from `release_date_backup` for matching items, saves them to the
 library and writes the file tags without MusicBrainz lookups or approach prompts. Zero components remain
 unknown. Items without a backup are skipped; malformed backups produce a warning and are left untouched.
-The backup and `recording_*` fields are preserved. `--restore` cannot be combined with `--approach` or `--force`.
+The backup, `recording_*` and `original_*` fields are preserved. `--restore` cannot be combined with `--approach` or `--force`.
 
 ## Prompting for processing
 
