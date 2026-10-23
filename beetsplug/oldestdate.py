@@ -8,10 +8,15 @@ from urllib.parse import quote_plus
 
 import mediafile
 from beets import ui, config
-from beets.autotag import hooks, TrackInfo
+from beets.autotag import TrackInfo
 from beets.importer import Action, ImportTask, ImportSession
 from beets.library import Item, Library
 from beets.plugins import BeetsPlugin
+
+try:
+    from beets.autotag.distance import Distance
+except ImportError:  # beets < 2.4
+    from beets.autotag.hooks import Distance  # type: ignore[attr-defined, no-redef]
 
 from . import mb_api
 from .date_wrapper import DateWrapper, parse_musicbrainz_date
@@ -151,8 +156,8 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
         if 'track_id' in info:
             self._fetch_recording(info.track_id)
 
-    def track_distance(self, _: Item, info: TrackInfo) -> hooks.Distance:
-        dist = hooks.Distance()
+    def track_distance(self, _: Item, info: TrackInfo) -> Distance:
+        dist = Distance()
         if info.data_source != 'MusicBrainz':
             self._log.debug('Skipping track with non MusicBrainz data source {0.artist} - {0.title}', info)
             return dist
@@ -426,7 +431,8 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
     def _should_process(self, item: Item) -> bool:
         """Whether the item can and must be processed"""
-        if not item.mb_trackid or item.data_source != 'MusicBrainz':
+        # data_source is a flexible attribute that may be missing (e.g. singletons); assume MusicBrainz then
+        if not item.mb_trackid or item.get('data_source', 'MusicBrainz') != 'MusicBrainz':
             self._log.info('Skipping track with no mb_trackid: {0.artist} - {0.title}', item)
             return False
 
