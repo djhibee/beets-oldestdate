@@ -1,3 +1,4 @@
+import datetime
 import os
 import tempfile
 import time
@@ -7,6 +8,7 @@ from unittest.mock import patch
 
 from beets import config
 from beets.autotag import AlbumInfo, TrackInfo
+from beets.dbcore.types import DateType
 
 from beets.library import Item, Library
 
@@ -20,6 +22,10 @@ from tests import thriller_fixtures as fx
 # Plugins can only be instantiated once (media fields are registered globally)
 PLUGIN = oldestdate.OldestDatePlugin()
 DEFAULT_CONFIG = PLUGIN.config.flatten()
+
+
+def backup_timestamp(year, month=1, day=1):
+    return time.mktime(datetime.datetime(year, month, day).timetuple())
 
 
 def reset_plugin():
@@ -257,26 +263,61 @@ class ImportTest(OldestDatePluginTestCase):
 
 
 class OptionsTest(OldestDatePluginTestCase):
+    def setUp(self):
+        super().setUp()
+        type_patcher = patch.dict(Item._types, {'release_date_backup': DateType()})
+        type_patcher.start()
+        self.addCleanup(type_patcher.stop)
+
     def test_overwrite_date_bool(self):
         self.plugin.config['overwrite_date'] = True
         item = self.make_item(singleton=True)
         self.plugin.config['singleton'] = 'work'
         self.plugin._process_file(item)
         self.assertEqual((1982, 11, 30), (item.year, item.month, item.day))
-        self.assertEqual('2005-10-17', item['release_date_backup'])
+        self.assertEqual(backup_timestamp(2005, 10, 17), item['release_date_backup'])
         item.load()
-        self.assertEqual('2005-10-17', item['release_date_backup'])
+        self.assertEqual(backup_timestamp(2005, 10, 17), item['release_date_backup'])
+        self.assertEqual(2005, datetime.datetime.fromtimestamp(item._values_flex['release_date_backup']).year)
+        self.assertEqual(
+            DateType().format(backup_timestamp(2005, 10, 17)),
+            item.formatted()['release_date_backup'])
+        self.assertEqual([item.id], [match.id for match in self.lib.items('release_date_backup:2005')])
+        self.assertEqual([], list(self.lib.items('release_date_backup:2006')))
+        self.assertEqual([item.id], [match.id for match in self.lib.items('release_date_backup:2000..2009')])
 
     def test_overwrite_date_backs_up_partial_dates(self):
         self.plugin.config['overwrite_date'] = True
         for year, month, day, backup in (
-                (2005, 10, 0, '2005-10-00'),
-                (2005, 0, 0, '2005-00-00'),
-                (0, 0, 0, '0000-00-00')):
+                (2005, 10, 0, backup_timestamp(2005, 10)),
+                (2005, 0, 0, backup_timestamp(2005)),
+                (0, 0, 0, None)):
             with self.subTest(backup=backup):
                 item = self.make_item(year=year, month=month, day=day)
                 self.plugin._apply_date(item, DateWrapper(1982, 11, 30), 'recording')
-                self.assertEqual(backup, item['release_date_backup'])
+                item.load()
+                self.assertEqual(backup, item.get('release_date_backup'))
+                self.assertNotIn('release_date_backup_raw', item)
+
+    def test_unknown_year_removes_previous_backup(self):
+        self.plugin.config['overwrite_date'] = True
+        item = self.make_item(year=0, month=0, day=0, release_date_backup=backup_timestamp(1999))
+        self.plugin._apply_date(item, DateWrapper(1982, 11, 30), 'recording')
+        item.load()
+        self.assertNotIn('release_date_backup', item)
+
+    def test_invalid_source_date_is_not_overwritten(self):
+        self.plugin.config['overwrite_date'] = True
+        for year, month, day in ((2005, 2, 29), (2005, 13, 1), (2005, 4, 31)):
+            with self.subTest(date=(year, month, day)):
+                item = self.make_item(year=year, month=month, day=day,
+                                      release_date_backup=backup_timestamp(1999))
+                with patch.object(self.plugin._log, 'warning') as warning:
+                    self.plugin._apply_date(item, DateWrapper(1982, 11, 30), 'recording')
+                warning.assert_called_once()
+                self.assertEqual((year, month, day), (item.year, item.month, item.day))
+                self.assertEqual(backup_timestamp(1999), item['release_date_backup'])
+        self.item_write.assert_not_called()
 
     def test_overwrite_date_backs_up_cleared_month_and_day(self):
         self.plugin.config['overwrite_date'] = True
@@ -285,7 +326,7 @@ class OptionsTest(OldestDatePluginTestCase):
         item = self.make_item()
         self.plugin._apply_date(item, DateWrapper(1982, 11, 30), 'recording')
         self.assertEqual((1982, 0, 0), (item.year, item.month, item.day))
-        self.assertEqual('2005-10-17', item['release_date_backup'])
+        self.assertEqual(backup_timestamp(2005, 10, 17), item['release_date_backup'])
 
     def test_no_backup_without_overwrite(self):
         item = self.make_item()
@@ -293,16 +334,16 @@ class OptionsTest(OldestDatePluginTestCase):
         self.assertNotIn('release_date_backup', item)
 
     def test_existing_backup_is_untouched_without_overwrite(self):
-        item = self.make_item(release_date_backup='1999-01-02')
+        item = self.make_item(release_date_backup=backup_timestamp(1999, 1, 2))
         self.plugin._process_file(item)
-        self.assertEqual('1999-01-02', item['release_date_backup'])
+        self.assertEqual(backup_timestamp(1999, 1, 2), item['release_date_backup'])
 
     def test_backup_is_updated_on_each_overwrite(self):
         self.plugin.config['overwrite_date'] = True
-        item = self.make_item(release_date_backup='1999-01-02')
+        item = self.make_item(release_date_backup=backup_timestamp(1999, 1, 2))
         self.plugin._apply_date(item, DateWrapper(1982, 11, 30), 'recording')
         self.plugin._apply_date(item, DateWrapper(1980), 'recording')
-        self.assertEqual('1982-11-30', item['release_date_backup'])
+        self.assertEqual(backup_timestamp(1982, 11, 30), item['release_date_backup'])
 
     def test_overwrite_date_only_for_release_approach(self):
         self.plugin.config['overwrite_date'] = ['release']
@@ -316,7 +357,7 @@ class OptionsTest(OldestDatePluginTestCase):
         album_item = self.make_item(singleton=False, year=2010)
         self.plugin._process_file(album_item)
         self.assertEqual(2005, album_item.year)  # Overwritten
-        self.assertEqual('2010-10-17', album_item['release_date_backup'])
+        self.assertEqual(backup_timestamp(2010, 10, 17), album_item['release_date_backup'])
 
     def test_overwrite_date_single_approach_string(self):
         self.plugin.config['overwrite_date'] = 'recording'
@@ -492,7 +533,7 @@ class RestoreDateTest(OldestDatePluginTestCase):
         command.func(self.lib, opts, query)
 
     def test_restores_and_persists_without_lookup_or_prompt(self):
-        item = self.make_item(year=1982, month=11, day=30, release_date_backup='2005-10-17',
+        item = self.make_item(year=1982, month=11, day=30, release_date_backup=backup_timestamp(2005, 10, 17),
                               recording_year=1982, recording_month=11, recording_day=30)
         self.plugin.config['overwrite_date'] = True
         self.plugin.config['overwrite_month'] = False
@@ -506,23 +547,38 @@ class RestoreDateTest(OldestDatePluginTestCase):
         self.assertEqual([], self.mb.calls)
         item.load()
         self.assertEqual((2005, 10, 17), (item.year, item.month, item.day))
-        self.assertEqual('2005-10-17', item['release_date_backup'])
+        self.assertEqual(backup_timestamp(2005, 10, 17), float(item['release_date_backup']))
         self.assertEqual((1982, 11, 30), (int(item.recording_year), int(item.recording_month), int(item.recording_day)))
         self.item_write.assert_called_once()
 
-    def test_restores_partial_and_unknown_dates(self):
-        for backup, expected in (
-                ('2005-10-00', (2005, 10, 0)),
-                ('2005-00-00', (2005, 0, 0)),
-                ('0000-00-00', (0, 0, 0)),
-                ('2005-00-17', (2005, 0, 17)),
-                ('2004-02-29', (2004, 2, 29))):
-            with self.subTest(backup=backup):
-                item = self.make_item(release_date_backup=backup)
+    def test_restores_normalized_dates_from_typed_backups(self):
+        self.plugin.config['overwrite_date'] = True
+        for original, expected in (
+                ((2005, 10, 0), (2005, 10, 1)),
+                ((2005, 0, 0), (2005, 1, 1)),
+                ((2004, 2, 29), (2004, 2, 29)),
+                ((1960, 1, 1), (1960, 1, 1)),
+                ((1970, 1, 1), (1970, 1, 1))):
+            with self.subTest(original=original), patch.dict(Item._types, {'release_date_backup': DateType()}):
+                item = self.make_item(year=original[0], month=original[1], day=original[2])
+                self.plugin._apply_date(item, DateWrapper(1982, 11, 30), 'recording')
+                item.load()
+                backup = item['release_date_backup']
                 self.run_restore(['id:{}'.format(item.id)])
                 item.load()
                 self.assertEqual(expected, (item.year, item.month, item.day))
                 self.assertEqual(backup, item['release_date_backup'])
+
+    def test_skips_null_backup(self):
+        item = self.make_item()
+        item._values_flex['release_date_backup'] = None
+        with patch.object(Item, 'store') as store, patch.object(self.plugin._log, 'warning') as warning:
+            self.plugin._restore_date(item)
+        store.assert_not_called()
+        warning.assert_not_called()
+        self.item_write.assert_not_called()
+        item.load()
+        self.assertEqual((2005, 10, 17), (item.year, item.month, item.day))
 
     def test_skips_missing_backups(self):
         item = self.make_item()
@@ -536,8 +592,8 @@ class RestoreDateTest(OldestDatePluginTestCase):
         self.assertNotIn('release_date_backup', item)
 
     def test_warns_and_skips_malformed_backups(self):
-        for backup in ('', 'garbage', '2005', '2005-1-02', '2005-13-01', '2005-01-32',
-                       '2005-02-29', '2005-04-31', '2005-10-17\n', '-001-01-01'):
+        for backup in ('', 'garbage', '2005-00-00', '0000-00-00', '2005-1-02', '2005-13-01', '2005-01-32',
+                       '2005-02-29', '2005-04-31', '2005-10-17\n', '-001-01-01', 'nan', 'inf', '1e100'):
             with self.subTest(backup=backup):
                 item = self.make_item(release_date_backup=backup)
                 with patch.object(Item, 'store') as store, patch.object(self.plugin._log, 'warning') as warning:
@@ -550,8 +606,8 @@ class RestoreDateTest(OldestDatePluginTestCase):
         self.item_write.assert_not_called()
 
     def test_query_limits_restoration(self):
-        selected = self.make_item(title='Selected', release_date_backup='1990-01-02')
-        other = self.make_item(title='Other', release_date_backup='1991-03-04')
+        selected = self.make_item(title='Selected', release_date_backup=backup_timestamp(1990, 1, 2))
+        other = self.make_item(title='Other', release_date_backup=backup_timestamp(1991, 3, 4))
         self.run_restore(['title:Selected'])
         selected.load()
         other.load()
@@ -561,7 +617,7 @@ class RestoreDateTest(OldestDatePluginTestCase):
 
     def test_invalid_backup_does_not_stop_other_items(self):
         self.make_item(release_date_backup='invalid')
-        valid = self.make_item(release_date_backup='1990-01-02')
+        valid = self.make_item(release_date_backup=backup_timestamp(1990, 1, 2))
         self.run_restore()
         valid.load()
         self.assertEqual((1990, 1, 2), (valid.year, valid.month, valid.day))
@@ -569,7 +625,7 @@ class RestoreDateTest(OldestDatePluginTestCase):
 
     def test_rejects_lookup_flags_before_changing_items(self):
         from beets.ui import UserError
-        item = self.make_item(release_date_backup='1990-01-02')
+        item = self.make_item(release_date_backup=backup_timestamp(1990, 1, 2))
         for flags in (['--approach', 'work'], ['-a', ''], ['--force'], ['-a', 'work', '-f']):
             with self.subTest(flags=flags), self.assertRaises(UserError):
                 self.run_restore(flags)

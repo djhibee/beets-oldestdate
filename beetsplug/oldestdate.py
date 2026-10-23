@@ -359,21 +359,15 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
         if backup is None:
             return
         try:
-            if not isinstance(backup, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', backup):
-                raise ValueError('expected YYYY-MM-DD')
-            year, month, day = (int(component) for component in backup.split('-'))
-            if not 0 <= month <= 12 or not 0 <= day <= 31:
-                raise ValueError('invalid month or day')
-            if month and day:
-                datetime.date(year or 2000, month, day)
-        except ValueError:
+            date = datetime.datetime.fromtimestamp(float(backup)).date()
+        except (ValueError, TypeError, OverflowError, OSError):
             self._log.warning('Skipping malformed release_date_backup for: {0.artist} - {0.title}: {1}', item, backup)
             return
 
-        item.year, item.month, item.day = year, month, day
+        item.year, item.month, item.day = date.year, date.month, date.day
         item.store()
         item.write()
-        ui.print_('oldestdate: Restored date for: {} - {} to {}'.format(item.artist, item.title, backup))
+        ui.print_('oldestdate: Restored date for: {} - {} to {}'.format(item.artist, item.title, date))
 
     def _on_import(self, _: ImportSession, task: ImportTask) -> None:
         if self.config['auto']:
@@ -541,7 +535,16 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
         # Write over the date tag if configured as YYYYMMDD
         if self._overwrite_date(approach):
-            item['release_date_backup'] = '{:04d}-{:02d}-{:02d}'.format(item.year, item.month, item.day)
+            if item.year:
+                try:
+                    backup = datetime.datetime(item.year, item.month or 1, item.day or 1)
+                    timestamp = time.mktime(backup.timetuple())
+                except (ValueError, OverflowError, OSError):
+                    self._log.warning('Skipping invalid release date for: {0.artist} - {0.title}', item)
+                    return
+                item['release_date_backup'] = timestamp
+            elif 'release_date_backup' in item:
+                del item['release_date_backup']
             self._log.warning('Overwriting date field for: {0.artist} - {0.title} from {0.year}-{0.month}-{0.day} '
                               'to {1} [{2}]', item, format_date(oldest_date), summary)
             item.year = str(oldest_date.y).zfill(4)
