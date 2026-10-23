@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "beets-oldestdate"
-version = "2.0.0" # Also change in beetsplug/mb_api.py
+version = "0.10.0" # Also change in beetsplug/mb_api.py
 authors = [
-    { name="kernitus" },
+    { name="djhibee" },
 ]
 description = "Beets plugin that finds oldest possible track recording or release date"
 readme = "README.md"
@@ -30,5 +30,5 @@ packages = ["beetsplug"]
 beets-oldestdate = "beets.oldestdate"
 
 [project.urls]
-"Homepage" = "https://github.com/kernitus/beets-oldestdate"
-"Bug Tracker" = "https://github.com/kernitus/beets-oldestdate/issues"
+"Homepage" = "https://github.com/djhibee/beets-oldestdate"
+"Bug Tracker" = "https://github.com/djhibee/beets-oldestdate/issues"
