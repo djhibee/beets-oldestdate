@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from beets import config
 from beets.autotag import AlbumInfo, TrackInfo
-from beets.importer import action
+from beets.importer import Action
 from beets.library import Item, Library
 
 from beetsplug import oldestdate
@@ -248,6 +248,11 @@ class ImportTest(OldestDatePluginTestCase):
         item = Item(mb_trackid="some_track_id", data_source="NonMusicBrainz", artist="Test Artist", title="Test Title")
         self.plugin._process_file(item)
         mock_log.assert_called_once_with('Skipping track with no mb_trackid: {0.artist} - {0.title}', item)
+
+    def test_should_process_without_data_source(self):
+        self.plugin.config['force'] = False
+        item = Item(mb_trackid="some_track_id", artist="Test Artist", title="Test Title")
+        self.assertTrue(self.plugin._should_process(item))
 
 
 class OptionsTest(OldestDatePluginTestCase):
@@ -602,7 +607,7 @@ class MissingWorkIdTest(OldestDatePluginTestCase):
         task = self.singleton_task()
         self.plugin._import_task_choice(task, None)
         input_options.assert_called_once_with(('Use this recording', 'Try again', 'Skip track'))
-        self.assertEqual(action.SKIP, task.choice_flag)
+        self.assertEqual(Action.SKIP, task.choice_flag)
 
     @patch('beets.ui.input_options', return_value='u')
     def test_use_recording(self, input_options):
@@ -622,7 +627,7 @@ class MissingWorkIdTest(OldestDatePluginTestCase):
         task = self.album_task(albumtypes=['album', 'live'])
         self.plugin._import_task_choice(task, None)
         input_options.assert_called_once_with(('Use this recording', 'Try again', 'Skip album'))
-        self.assertEqual(action.SKIP, task.choice_flag)
+        self.assertEqual(Action.SKIP, task.choice_flag)
 
     @patch('beets.ui.input_options', return_value='s')
     def test_compilation_prompted_for_work(self, input_options):
