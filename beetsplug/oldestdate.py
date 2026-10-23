@@ -7,16 +7,15 @@ from typing import Optional, Any, List, Dict, Iterable, Tuple, Union
 from urllib.parse import quote_plus
 
 import mediafile
-from beets import ui, config
+from beets import ui, config, importer
 from beets.autotag import TrackInfo
-from beets.importer import Action, ImportTask, ImportSession
+from beets.importer import ImportTask, ImportSession
 from beets.library import Item, Library
 from beets.plugins import BeetsPlugin
 
-try:
-    from beets.autotag.distance import Distance
-except ImportError:  # beets < 2.4
-    from beets.autotag.hooks import Distance  # type: ignore[attr-defined, no-redef]
+action: Any = getattr(importer, 'Action', None)
+if action is None:
+    action = getattr(importer, 'action')
 
 from . import mb_api
 from .date_wrapper import DateWrapper, parse_musicbrainz_date
