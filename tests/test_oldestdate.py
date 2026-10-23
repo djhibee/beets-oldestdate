@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from beets import config
 from beets.autotag import AlbumInfo, TrackInfo
+
 from beets.library import Item, Library
 
 from beetsplug import oldestdate
@@ -249,6 +250,11 @@ class ImportTest(OldestDatePluginTestCase):
         self.plugin._process_file(item)
         mock_log.assert_called_once_with('Skipping track with no mb_trackid: {0.artist} - {0.title}', item)
 
+    def test_should_process_without_data_source(self):
+        self.plugin.config['force'] = False
+        item = Item(mb_trackid="some_track_id", artist="Test Artist", title="Test Title")
+        self.assertTrue(self.plugin._should_process(item))
+
 
 class OptionsTest(OldestDatePluginTestCase):
     def test_overwrite_date_bool(self):
@@ -257,6 +263,46 @@ class OptionsTest(OldestDatePluginTestCase):
         self.plugin.config['singleton'] = 'work'
         self.plugin._process_file(item)
         self.assertEqual((1982, 11, 30), (item.year, item.month, item.day))
+        self.assertEqual('2005-10-17', item['release_date_backup'])
+        item.load()
+        self.assertEqual('2005-10-17', item['release_date_backup'])
+
+    def test_overwrite_date_backs_up_partial_dates(self):
+        self.plugin.config['overwrite_date'] = True
+        for year, month, day, backup in (
+                (2005, 10, 0, '2005-10-00'),
+                (2005, 0, 0, '2005-00-00'),
+                (0, 0, 0, '0000-00-00')):
+            with self.subTest(backup=backup):
+                item = self.make_item(year=year, month=month, day=day)
+                self.plugin._apply_date(item, DateWrapper(1982, 11, 30), 'recording')
+                self.assertEqual(backup, item['release_date_backup'])
+
+    def test_overwrite_date_backs_up_cleared_month_and_day(self):
+        self.plugin.config['overwrite_date'] = True
+        self.plugin.config['overwrite_month'] = False
+        self.plugin.config['overwrite_day'] = False
+        item = self.make_item()
+        self.plugin._apply_date(item, DateWrapper(1982, 11, 30), 'recording')
+        self.assertEqual((1982, 0, 0), (item.year, item.month, item.day))
+        self.assertEqual('2005-10-17', item['release_date_backup'])
+
+    def test_no_backup_without_overwrite(self):
+        item = self.make_item()
+        self.plugin._process_file(item)
+        self.assertNotIn('release_date_backup', item)
+
+    def test_existing_backup_is_untouched_without_overwrite(self):
+        item = self.make_item(release_date_backup='1999-01-02')
+        self.plugin._process_file(item)
+        self.assertEqual('1999-01-02', item['release_date_backup'])
+
+    def test_backup_is_updated_on_each_overwrite(self):
+        self.plugin.config['overwrite_date'] = True
+        item = self.make_item(release_date_backup='1999-01-02')
+        self.plugin._apply_date(item, DateWrapper(1982, 11, 30), 'recording')
+        self.plugin._apply_date(item, DateWrapper(1980), 'recording')
+        self.assertEqual('1982-11-30', item['release_date_backup'])
 
     def test_overwrite_date_only_for_release_approach(self):
         self.plugin.config['overwrite_date'] = ['release']
@@ -265,23 +311,25 @@ class OptionsTest(OldestDatePluginTestCase):
         self.plugin._process_file(singleton)
         self.assertEqual(1982, singleton.recording_year)
         self.assertEqual((2005, 10, 17), (singleton.year, singleton.month, singleton.day))  # Untouched
+        self.assertNotIn('release_date_backup', singleton)
 
         album_item = self.make_item(singleton=False, year=2010)
         self.plugin._process_file(album_item)
         self.assertEqual(2005, album_item.year)  # Overwritten
+        self.assertEqual('2010-10-17', album_item['release_date_backup'])
 
     def test_overwrite_date_single_approach_string(self):
         self.plugin.config['overwrite_date'] = 'recording'
         self.assertTrue(self.plugin._overwrite_date('recording'))
         self.assertFalse(self.plugin._overwrite_date('work'))
 
-    @patch('beets.ui.input_options', return_value='n')
-    def test_prompt_for_no_skips_processing(self, input_options):
+    @patch('beets.ui.input_options', return_value='s')
+    def test_prompt_for_skip_skips_processing(self, input_options):
         self.plugin.config['prompt_for'] = ['work']
         self.plugin.config['singleton'] = 'work'
         item = self.make_item(singleton=True)
         self.plugin._process_file(item)
-        input_options.assert_called_once_with(('Yes', 'No'))
+        input_options.assert_called_once_with(['Yes', 'Release', 'reCording', 'Skip'], default='y')
         self.assertNotIn('recording_year', item)
         self.assertEqual([], self.mb.calls)  # Asked before any lookup
 
@@ -309,7 +357,7 @@ class OptionsTest(OldestDatePluginTestCase):
         self.plugin._process_file(item)
         input_options.assert_not_called()
 
-    @patch('beets.ui.input_options', return_value='n')
+    @patch('beets.ui.input_options', return_value='s')
     def test_prompt_for_compilation_with_singleton_alias(self, input_options):
         # Compilation processed with the recording ("singleton") approach, which requires a prompt
         self.plugin.config['compilation'] = 'singleton'
@@ -329,11 +377,11 @@ class OptionsTest(OldestDatePluginTestCase):
     def test_prompt_once_per_album(self, input_options):
         self.plugin.config['prompt_for'] = ['release']
         self.album_items()
-        self.plugin._command_func(self.lib, mock.Mock(approach=None, force=None), [])
+        self.plugin._command_func(self.lib, mock.Mock(approach=None, force=None, restore=False), [])
         input_options.assert_called_once()
         self.assertEqual([2005, 2005], [int(item.recording_year) for item in self.lib.items()])
 
-    @patch('beets.ui.input_options', return_value='n')
+    @patch('beets.ui.input_options', return_value='s')
     def test_prompt_album_on_import(self, input_options):
         self.plugin.config['prompt_for'] = ['release']
         items = self.album_items()
@@ -356,31 +404,179 @@ class OptionsTest(OldestDatePluginTestCase):
         input_options.assert_not_called()
         self.assertEqual(2005, item.recording_year)
 
+    @patch('beets.ui.input_', return_value='')
+    def test_prompt_default_confirms_each_approach(self, input_):
+        item = self.make_item()
+        for approach in oldestdate.APPROACHES:
+            with self.subTest(approach=approach):
+                self.assertEqual(approach, self.plugin._select_approach([item], approach))
+        self.assertEqual(3, input_.call_count)
+
+    @patch('beets.ui.input_')
+    def test_prompt_can_select_each_alternative(self, input_):
+        item = self.make_item()
+        shortcuts = {'release': 'r', 'recording': 'c', 'work': 'w'}
+        for approach in oldestdate.APPROACHES:
+            for alternative in oldestdate.APPROACHES:
+                if alternative == approach:
+                    continue
+                with self.subTest(approach=approach, alternative=alternative):
+                    input_.return_value = shortcuts[alternative]
+                    self.assertEqual(alternative, self.plugin._select_approach([item], approach))
+
+    @patch('beets.ui.input_options', return_value='w')
+    def test_prompt_changes_singleton_approach_without_changing_config(self, input_options):
+        self.plugin.config['prompt_for'] = ['recording', 'work']
+        self.plugin.config['overwrite_date'] = ['work']
+        item = self.make_item()
+        self.plugin._process_file(item)
+        input_options.assert_called_once()
+        self.assertEqual(1982, item.recording_year)
+        self.assertEqual((1982, 11, 30), (item.year, item.month, item.day))
+        self.assertEqual('recording', self.plugin._get_approach(item))
+
+    @patch('beets.ui.input_options', return_value='w')
+    def test_prompt_changes_album_approach_on_import(self, input_options):
+        self.plugin.config['prompt_for'] = ['release', 'work']
+        items = self.album_items()
+        task = mock.Mock()
+        task.imported_items.return_value = items
+        self.plugin._on_import(None, task)
+        input_options.assert_called_once()
+        self.assertEqual([1982, 1982], [item.recording_year for item in items])
+        self.assertEqual('release', self.plugin._get_approach(items[0]))
+
+    @patch('beets.ui.input_options', return_value='c')
+    def test_prompt_changes_forced_album_approach_in_command(self, input_options):
+        self.plugin.config['prompt_for'] = ['work']
+        self.album_items()
+        with patch.object(self.plugin, '_get_oldest_date', wraps=self.plugin._get_oldest_date) as lookup:
+            self.plugin._command_func(self.lib, mock.Mock(approach='work', force=None, restore=False), [])
+        input_options.assert_called_once()
+        self.assertEqual(['recording', 'recording'], [call[0][1] for call in lookup.call_args_list])
+        self.assertEqual([2005, 2005], [int(item.recording_year) for item in self.lib.items()])
+
     def test_command_forced_approach(self):
         item = self.make_item(singleton=True)
-        self.plugin._command_func(self.lib, mock.Mock(approach='work', force=None), [])
+        self.plugin._command_func(self.lib, mock.Mock(approach='work', force=None, restore=False), [])
         item.load()
         self.assertEqual(1982, int(item.recording_year))
         self.item_write.assert_called_once()
 
         # Already processed: skipped unless forced
-        self.plugin._command_func(self.lib, mock.Mock(approach='recording', force=None), [])
+        self.plugin._command_func(self.lib, mock.Mock(approach='recording', force=None, restore=False), [])
         item.load()
         self.assertEqual(1982, int(item.recording_year))
-        self.plugin._command_func(self.lib, mock.Mock(approach='recording', force=True), [])
+        self.plugin._command_func(self.lib, mock.Mock(approach='recording', force=True, restore=False), [])
         item.load()
         self.assertEqual(2005, int(item.recording_year))
 
     def test_command_invalid_approach(self):
         from beets.ui import UserError
         with self.assertRaises(UserError):
-            self.plugin._command_func(self.lib, mock.Mock(approach='hybrid', force=None), [])
+            self.plugin._command_func(self.lib, mock.Mock(approach='hybrid', force=None, restore=False), [])
 
     def test_command_parser(self):
         command = self.plugin.commands()[0]
         opts, _ = command.parser.parse_args(['-a', 'work', '-f'])
         self.assertEqual('work', opts.approach)
         self.assertTrue(opts.force)
+        self.assertFalse(opts.restore)
+
+
+class RestoreDateTest(OldestDatePluginTestCase):
+    def run_restore(self, args=None):
+        command = self.plugin.commands()[0]
+        opts, query = command.parser.parse_args(['--restore'] + (args or []))
+        self.assertTrue(opts.restore)
+        command.func(self.lib, opts, query)
+
+    def test_restores_and_persists_without_lookup_or_prompt(self):
+        item = self.make_item(year=1982, month=11, day=30, release_date_backup='2005-10-17',
+                              recording_year=1982, recording_month=11, recording_day=30)
+        self.plugin.config['overwrite_date'] = True
+        self.plugin.config['overwrite_month'] = False
+        self.plugin.config['overwrite_day'] = False
+        self.plugin.config['prompt_for'] = list(oldestdate.APPROACHES)
+        self.plugin._importing = True
+        with patch.object(self.plugin, '_get_oldest_date') as lookup, patch('beets.ui.input_options') as prompt:
+            self.run_restore()
+        lookup.assert_not_called()
+        prompt.assert_not_called()
+        self.assertEqual([], self.mb.calls)
+        item.load()
+        self.assertEqual((2005, 10, 17), (item.year, item.month, item.day))
+        self.assertEqual('2005-10-17', item['release_date_backup'])
+        self.assertEqual((1982, 11, 30), (int(item.recording_year), int(item.recording_month), int(item.recording_day)))
+        self.item_write.assert_called_once()
+
+    def test_restores_partial_and_unknown_dates(self):
+        for backup, expected in (
+                ('2005-10-00', (2005, 10, 0)),
+                ('2005-00-00', (2005, 0, 0)),
+                ('0000-00-00', (0, 0, 0)),
+                ('2005-00-17', (2005, 0, 17)),
+                ('2004-02-29', (2004, 2, 29))):
+            with self.subTest(backup=backup):
+                item = self.make_item(release_date_backup=backup)
+                self.run_restore(['id:{}'.format(item.id)])
+                item.load()
+                self.assertEqual(expected, (item.year, item.month, item.day))
+                self.assertEqual(backup, item['release_date_backup'])
+
+    def test_skips_missing_backups(self):
+        item = self.make_item()
+        with patch.object(Item, 'store') as store, patch.object(self.plugin._log, 'warning') as warning:
+            self.run_restore()
+        store.assert_not_called()
+        warning.assert_not_called()
+        self.item_write.assert_not_called()
+        item.load()
+        self.assertEqual((2005, 10, 17), (item.year, item.month, item.day))
+        self.assertNotIn('release_date_backup', item)
+
+    def test_warns_and_skips_malformed_backups(self):
+        for backup in ('', 'garbage', '2005', '2005-1-02', '2005-13-01', '2005-01-32',
+                       '2005-02-29', '2005-04-31', '2005-10-17\n', '-001-01-01'):
+            with self.subTest(backup=backup):
+                item = self.make_item(release_date_backup=backup)
+                with patch.object(Item, 'store') as store, patch.object(self.plugin._log, 'warning') as warning:
+                    self.run_restore(['id:{}'.format(item.id)])
+                warning.assert_called_once()
+                store.assert_not_called()
+                item.load()
+                self.assertEqual((2005, 10, 17), (item.year, item.month, item.day))
+                self.assertEqual(backup, item['release_date_backup'])
+        self.item_write.assert_not_called()
+
+    def test_query_limits_restoration(self):
+        selected = self.make_item(title='Selected', release_date_backup='1990-01-02')
+        other = self.make_item(title='Other', release_date_backup='1991-03-04')
+        self.run_restore(['title:Selected'])
+        selected.load()
+        other.load()
+        self.assertEqual((1990, 1, 2), (selected.year, selected.month, selected.day))
+        self.assertEqual((2005, 10, 17), (other.year, other.month, other.day))
+        self.item_write.assert_called_once()
+
+    def test_invalid_backup_does_not_stop_other_items(self):
+        self.make_item(release_date_backup='invalid')
+        valid = self.make_item(release_date_backup='1990-01-02')
+        self.run_restore()
+        valid.load()
+        self.assertEqual((1990, 1, 2), (valid.year, valid.month, valid.day))
+        self.item_write.assert_called_once()
+
+    def test_rejects_lookup_flags_before_changing_items(self):
+        from beets.ui import UserError
+        item = self.make_item(release_date_backup='1990-01-02')
+        for flags in (['--approach', 'work'], ['-a', ''], ['--force'], ['-a', 'work', '-f']):
+            with self.subTest(flags=flags), self.assertRaises(UserError):
+                self.run_restore(flags)
+        item.load()
+        self.assertEqual((2005, 10, 17), (item.year, item.month, item.day))
+        self.item_write.assert_not_called()
+        self.assertEqual([], self.mb.calls)
 
 
 class MissingWorkIdTest(OldestDatePluginTestCase):
@@ -412,7 +608,7 @@ class MissingWorkIdTest(OldestDatePluginTestCase):
         task = self.singleton_task()
         self.plugin._import_task_choice(task, None)
         input_options.assert_called_once_with(('Use this recording', 'Try again', 'Skip track'))
-        self.assertEqual(action.SKIP, task.choice_flag)
+        self.assertEqual(Action.SKIP, task.choice_flag)
 
     @patch('beets.ui.input_options', return_value='u')
     def test_use_recording(self, input_options):
@@ -432,7 +628,7 @@ class MissingWorkIdTest(OldestDatePluginTestCase):
         task = self.album_task(albumtypes=['album', 'live'])
         self.plugin._import_task_choice(task, None)
         input_options.assert_called_once_with(('Use this recording', 'Try again', 'Skip album'))
-        self.assertEqual(action.SKIP, task.choice_flag)
+        self.assertEqual(Action.SKIP, task.choice_flag)
 
     @patch('beets.ui.input_options', return_value='s')
     def test_compilation_prompted_for_work(self, input_options):

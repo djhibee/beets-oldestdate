@@ -1,5 +1,6 @@
 import datetime
 import os
+import re
 import threading
 import time
 from typing import Optional, Any, List, Dict, Iterable, Tuple, Union
@@ -7,7 +8,7 @@ from urllib.parse import quote_plus
 
 import mediafile
 from beets import ui, config, importer
-from beets.autotag import Distance, TrackInfo
+from beets.autotag import TrackInfo
 from beets.importer import ImportTask, ImportSession
 from beets.library import Item, Library
 from beets.plugins import BeetsPlugin
@@ -91,7 +92,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
             'album': RELEASE,  # Approach for standard albums
             'compilation': RECORDING,  # Approach for compilations
             'album_type': {},  # Approach by album type, e.g. {soundtrack: release}. Takes priority
-            'prompt_for': [],  # Approaches for which to ask whether an item/album must be processed, e.g. [work]
+            'prompt_for': [],  # Approaches for which to confirm, change approach or skip an item/album, e.g. [work]
             'release_types': None,  # Filter by release status, e.g. ['Official']
             'use_file_date': False,  # Also use file's embedded date when looking for oldest date
             'max_network_retries': 3,  # Maximum amount of times a given network call will be retried
@@ -143,6 +144,9 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
         recording_date_command.parser.add_option(
             '-f', '--force', dest='force', action='store_true', default=None,
             help='process items even if they have already been processed')
+        recording_date_command.parser.add_option(
+            '--restore', action='store_true', default=False,
+            help='restore date fields from release_date_backup without MusicBrainz lookups')
         recording_date_command.func = self._command_func
         return [recording_date_command]
 
@@ -190,7 +194,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
                 if track.get('data_source', 'MusicBrainz') != 'MusicBrainz' or not track.get('track_id'):
                     continue
                 if not self._prompt_missing_work_id(track, skip_option):
-                    task.choice_flag = action.SKIP
+                    task.choice_flag = Action.SKIP
                     return
         except mb_api.MusicBrainzError as e:
             self._log.error('Could not check work for {0}: {1}', task, e)
@@ -324,6 +328,14 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
     def _command_func(self, lib: Library, opts: Any, args: List[str]) -> None:
         """This queries the local database, not the files."""
+        if opts.restore:
+            if opts.approach is not None or opts.force is not None:
+                raise ui.UserError('--restore cannot be combined with --approach or --force')
+            self._importing = False
+            for item in lib.items(args):
+                self._restore_date(item)
+            return
+
         forced_approach = None
         if opts.approach:
             try:
@@ -342,6 +354,27 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
         for items in groups.values():
             self._process_items(items, forced_approach)
 
+    def _restore_date(self, item: Item) -> None:
+        backup = item.get('release_date_backup')
+        if backup is None:
+            return
+        try:
+            if not isinstance(backup, str) or not re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}', backup):
+                raise ValueError('expected YYYY-MM-DD')
+            year, month, day = (int(component) for component in backup.split('-'))
+            if not 0 <= month <= 12 or not 0 <= day <= 31:
+                raise ValueError('invalid month or day')
+            if month and day:
+                datetime.date(year or 2000, month, day)
+        except ValueError:
+            self._log.warning('Skipping malformed release_date_backup for: {0.artist} - {0.title}: {1}', item, backup)
+            return
+
+        item.year, item.month, item.day = year, month, day
+        item.store()
+        item.write()
+        ui.print_('oldestdate: Restored date for: {} - {} to {}'.format(item.artist, item.title, backup))
+
     def _on_import(self, _: ImportSession, task: ImportTask) -> None:
         if self.config['auto']:
             self._importing = True
@@ -349,7 +382,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
     def _process_items(self, items: Iterable[Item], forced_approach: Optional[str] = None) -> None:
         """Process a group of items (an album or a singleton).
-        If the approach is listed in prompt_for, first ask whether the group must be processed."""
+        If the approach is listed in prompt_for, first ask to confirm, change approach or skip."""
         by_approach: Dict[str, List[Item]] = {}
         for item in items:
             if self._should_process(item):
@@ -357,9 +390,12 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
         prompt_for = self._prompt_for()
         for approach, approach_items in by_approach.items():
-            if approach in prompt_for and not self._confirm(approach_items, approach):
-                self._log.info('Skipping {0} item(s) as requested ({1} approach)', len(approach_items), approach)
-                continue
+            if approach in prompt_for:
+                selected_approach = self._select_approach(approach_items, approach)
+                if selected_approach is None:
+                    self._log.info('Skipping {0} item(s) as requested ({1} approach)', len(approach_items), approach)
+                    continue
+                approach = selected_approach
             for item in approach_items:
                 result = self._find_date(item, approach)
                 if result is not None:
@@ -374,10 +410,10 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
             value = [value]
         return [normalize_approach(approach) for approach in value]
 
-    def _confirm(self, items: List[Item], approach: str) -> bool:
-        """Ask the user whether the items (album or singleton) must be processed with given approach"""
+    def _select_approach(self, items: List[Item], approach: str) -> Optional[str]:
+        """Confirm or change the approach for an album or singleton, or return None to skip"""
         if config['import']['quiet'].get(bool):
-            return True
+            return approach
         first = items[0]
         if first.album_id is not None:
             description = 'album {} - {} ({} track(s))'.format(first.albumartist or first.artist, first.album,
@@ -385,12 +421,17 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
         else:
             description = 'track {} - {}'.format(first.artist, first.title)
         print('oldestdate: process {} using the {} approach?'.format(description, approach))
-        sel = ui.input_options(('Yes', 'No'))
-        return bool(sel == 'y')
+        alternatives = [(RELEASE, 'Release'), (RECORDING, 'reCording'), (WORK, 'Work')]
+        options = ['Yes'] + [label for name, label in alternatives if name != approach] + ['Skip']
+        sel = ui.input_options(options, default='y')
+        if sel == 'y':
+            return approach
+        return {'r': RELEASE, 'c': RECORDING, 'w': WORK}.get(sel)
 
     def _should_process(self, item: Item) -> bool:
         """Whether the item can and must be processed"""
-        if not item.mb_trackid or item.data_source != 'MusicBrainz':
+        # data_source is a flexible attribute that may be missing (e.g. singletons); assume MusicBrainz then
+        if not item.mb_trackid or item.get('data_source', 'MusicBrainz') != 'MusicBrainz':
             self._log.info('Skipping track with no mb_trackid: {0.artist} - {0.title}', item)
             return False
 
@@ -500,6 +541,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
 
         # Write over the date tag if configured as YYYYMMDD
         if self._overwrite_date(approach):
+            item['release_date_backup'] = '{:04d}-{:02d}-{:02d}'.format(item.year, item.month, item.day)
             self._log.warning('Overwriting date field for: {0.artist} - {0.title} from {0.year}-{0.month}-{0.day} '
                               'to {1} [{2}]', item, format_date(oldest_date), summary)
             item.year = str(oldest_date.y).zfill(4)

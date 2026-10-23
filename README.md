@@ -1,3 +1,5 @@
+Created from  kernitus/beets-oldestdate plugin.
+
 # beets-oldestdate
 
 Beets plugin that fetches oldest recording or release date for each track. This is especially useful when tracks are
@@ -45,7 +47,7 @@ and `recordings` of `recording`, `works` of `work`.
 |     overwrite_date     |     False     | Overwrite the date tag fields (year, month, day). `yes`/`no` for all approaches, or a list of approaches, e.g. `[release]`, so that only album dates are changed (useful for e.g. Plex)  |
 |    overwrite_month     |     True      |                                                                 If overwriting date, also overwrite month field, otherwise leave blank                                                                 |
 |     overwrite_day      |     True      |                                                                  If overwriting date, also overwrite day field, otherwise leave blank                                                                  |
-|       prompt_for       |      []       | List of approaches for which the plugin asks, before any lookup, whether the item (singleton) or album must be processed at all, e.g. `[recording, work]`. In quiet mode, items are processed without asking |
+|       prompt_for       |      []       | List of approaches for which the plugin asks, before any lookup, to confirm the current approach (default), select another approach, or skip the item (singleton) or album, e.g. `[recording, work]`. In quiet mode, items are processed with the configured approach without asking |
 |    ignore_track_id     |     False     |                                       During import, ignore existing track_id. Needed if using plugin on a library already tagged by MusicBrainz                                       |
 |    filter_on_import    |     True      |                                   During import, weight down candidates with no work_id so you are more likely to choose a recording with a work_id                                    |
 | prompt_missing_work_id |     True      |                                   During import, prompt to fix work_id if missing from chosen recording. Only applies to items using the `work` approach                                   |
@@ -72,6 +74,11 @@ When the date is not overwritten, `oldestdate: Oldest date for: <artist> - <titl
 Partial MusicBrainz dates such as `2015-??-??` or `2015-07-??` are kept partial: missing month or day values are
 never invented.
 
+When `overwrite_date` applies to an item, its current `year`, `month` and `day` fields are saved before
+overwriting in the text flexible attribute `release_date_backup` in the beets library. The format is
+`YYYY-MM-DD`, with zeroes for unknown components (e.g. `2005-00-00`). Each overwrite updates the backup
+to the date being replaced; processing without overwriting leaves the backup untouched.
+
 ## Skipped tracks
 
 Tracks that could not be processed (network failures, unusable MusicBrainz data, processing errors, or a time budget
@@ -82,15 +89,29 @@ track (`timestamp | artist - title | path | reason`), so they can be retried lat
 
     beet oldestdate [-a {release,recording,work}] [-f] [QUERY]
 
-`-a/--approach` forces the approach for all matched items, `-f/--force` processes items that were already processed.
-`prompt_for` also applies to the command, based on the approach used (including a forced one).
+`-a/--approach` forces the initial approach for all matched items, `-f/--force` processes items that were already processed.
+`prompt_for` also applies to the command, based on the approach used (including a forced one), and allows changing it.
+
+To restore backed-up release dates:
+
+    beet oldestdate --restore [QUERY]
+
+This restores `year`, `month` and `day` from `release_date_backup` for matching items, saves them to the
+library and writes the file tags without MusicBrainz lookups or approach prompts. Zero components remain
+unknown. Items without a backup are skipped; malformed backups produce a warning and are left untouched.
+The backup and `recording_*` fields are preserved. `--restore` cannot be combined with `--approach` or `--force`.
 
 ## Prompting for processing
 
-With `prompt_for`, the plugin asks for confirmation before processing an item or album whose approach is listed. For
+With `prompt_for`, the plugin asks before processing an item or album whose initial approach is listed. For
 example, with `compilation: singleton` and `prompt_for: [singleton]`, importing a compilation will prompt
-`process album ... using the recording approach? [Y]es, [N]o`: answering no leaves the album untouched by the plugin.
+`process album ... using the recording approach? [Y]es, Release, Work, Skip`: pressing Enter or answering yes confirms
+the configured approach, choosing release or work changes it for this album, and skip leaves the album untouched.
+When recording is offered as an alternative, its shortcut is `C` (`reCording`), to distinguish it from release (`R`).
 The question is asked once per album (or per singleton) and only for items that would actually be processed.
+The selected approach applies to both date lookup and approach-specific settings such as `overwrite_date`; it does
+not change the configuration or prompt again for the newly selected approach. In quiet mode, the initial approach is
+used without asking.
 
 ## Example Configuration
 
@@ -125,7 +146,7 @@ live recordings) are skipped if `filter_recordings` is enabled.
 This only applies to items processed with the `work` approach. If the chosen recording has no Work associated with it, the plugin cannot do its job. This is where `filter_on_import`
 comes in: it applies a negative score to tracks that don't have an associated work so they are much less likely to be
 chosen. However, this means some of the displayed tracks will be irrelevant. Thus, setting the `searchlimit` to 20 or so
-tracks is needed to hit the one recording that *does* have a work. This happens to work quite well with famous songs
+tracks may be needed to hit the one recording that *does* have a work. This happens to work quite well with famous songs
 because there is usually a single recording with an associated work that is the original recording, and thus the oldest.
 If we match with this one, the other recordings that we can't get to because they are not associated with the same work
 are irrelevant, because we already have the oldest date.
