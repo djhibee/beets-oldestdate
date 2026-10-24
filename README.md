@@ -75,9 +75,34 @@ Partial MusicBrainz dates such as `2015-??-??` or `2015-07-??` are kept partial:
 never invented.
 
 When `overwrite_date` applies to an item, its current `year`, `month` and `day` fields are saved before
-overwriting in the text flexible attribute `release_date_backup` in the beets library. The format is
-`YYYY-MM-DD`, with zeroes for unknown components (e.g. `2005-00-00`). Each overwrite updates the backup
-to the date being replaced; processing without overwriting leaves the backup untouched.
+overwriting in the single flexible attribute `release_date_backup` in the beets library as a numeric
+timestamp, compatible with beets' `date` type and inline expressions such as
+`datetime.fromtimestamp(backup_timestamp).year`. Enable date queries with the types plugin:
+
+```yaml
+plugins: [oldestdate, types]  # Include your other plugins here too.
+types:
+  release_date_backup: date
+```
+
+For backup storage, unknown month/day components become `1`: `2005-00-00` becomes `2005-01-01`,
+and `2005-10-00` becomes `2005-10-01`. A zero year (`0000-00-00`) leaves the backup unset/NULL,
+removing any previous backup rather than storing the Unix epoch. No extra backup field is created.
+Each overwrite updates the backup to the date being replaced; processing without overwriting leaves
+it untouched. This normalization affects only the backup, not partial MusicBrainz dates written to tags.
+Timestamps use local time, consistent with beets DateType parsing/formatting; use the same timezone
+when backing up and restoring. Invalid calendar dates are skipped with a warning rather than overwritten.
+
+You can query by year or range, for example `beet ls 'release_date_backup:2005'` or
+`beet ls 'release_date_backup:2000..2009'`. A year-only backup also matches January queries.
+
+**Migration:** Existing `YYYY-MM-DD` text backups are not automatically converted. Before using them
+as date fields, migrate them in place to local-time numeric timestamps using the normalization above
+(remove zero-year backups), or clear them. Beets DateType may interpret unparseable legacy text as
+its numeric null value (the Unix epoch), so migrate before relying on date-typed reads.
+Save a copy of your library first. Do not force another
+overwrite merely to migrate: it replaces the backup with the item's *current* date. Legacy text values
+are skipped with a warning by `--restore` when they have not already been coerced by DateType.
 
 ## Skipped tracks
 
@@ -97,8 +122,10 @@ To restore backed-up release dates:
     beet oldestdate --restore [QUERY]
 
 This restores `year`, `month` and `day` from `release_date_backup` for matching items, saves them to the
-library and writes the file tags without MusicBrainz lookups or approach prompts. Zero components remain
-unknown. Items without a backup are skipped; malformed backups produce a warning and are left untouched.
+library and writes the file tags without MusicBrainz lookups or approach prompts. Restore uses the full
+normalized date from the stored timestamp: unknown month/day components cannot be preserved with only
+one date-typed field. Items with NULL/missing backups are skipped; malformed backups produce a warning
+and are left untouched.
 The backup and `recording_*` fields are preserved. `--restore` cannot be combined with `--approach` or `--force`.
 
 ## Prompting for processing
