@@ -1,6 +1,9 @@
 import datetime
 import os
+import subprocess
+import sys
 import tempfile
+import textwrap
 import time
 import unittest
 from unittest import mock
@@ -635,6 +638,59 @@ class RestoreDateTest(OldestDatePluginTestCase):
         self.assertEqual([], self.mb.calls)
 
 
+class WriteBackupTagTest(OldestDatePluginTestCase):
+    def test_backup_tag_not_registered_by_default(self):
+        self.assertFalse(self.plugin.config['write'].get(bool))
+        self.assertNotIn('release_date_backup', Item._media_fields)
+        self.assertIn('recording_year', Item._media_fields)
+
+    def test_write_listener_clears_tag_without_backup(self):
+        tags = {}
+        oldestdate.OldestDatePlugin._on_write(Item(), b'', tags)
+        self.assertEqual({'release_date_backup': None}, tags)
+
+    def test_write_listener_keeps_existing_backup(self):
+        item = Item()
+        item['release_date_backup'] = backup_timestamp(2005)
+        tags = {'release_date_backup': item['release_date_backup']}
+        oldestdate.OldestDatePlugin._on_write(item, b'', tags)
+        self.assertEqual(backup_timestamp(2005), tags['release_date_backup'])
+
+    def test_backup_tag_round_trip_when_enabled(self):
+        # Media fields are global: run in a separate process with write enabled
+        script = textwrap.dedent("""
+            import os, sys, wave
+            from beets import config
+            config['oldestdate']['write'] = True
+            from beets.library import Item
+            from mediafile import MediaFile
+            from beetsplug.oldestdate import OldestDatePlugin
+            OldestDatePlugin()
+            path = os.path.join(sys.argv[1], 'track.wav')
+            with wave.open(path, 'wb') as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(8000)
+                w.writeframes(bytes(1600))
+            item = Item.from_path(path)
+            item['release_date_backup'] = float(sys.argv[2])
+            item.write()
+            print(MediaFile(path).release_date_backup)
+            print(Item.from_path(path).release_date_backup)
+            del item['release_date_backup']
+            item.write()
+            print(MediaFile(path).release_date_backup)
+        """)
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = dict(os.environ, PYTHONPATH=root + os.pathsep + os.environ.get('PYTHONPATH', ''))
+        result = subprocess.run(
+            [sys.executable, '-c', script, self.tmpdir.name, str(backup_timestamp(2005, 10, 3))],
+            capture_output=True, text=True, env=env, cwd=self.tmpdir.name)
+        self.assertEqual(0, result.returncode, result.stderr)
+        expected = str(backup_timestamp(2005, 10, 3))
+        self.assertEqual([expected, expected, 'None'], result.stdout.split())
+
+
 class MissingWorkIdTest(OldestDatePluginTestCase):
     def setUp(self):
         super().setUp()
@@ -664,7 +720,7 @@ class MissingWorkIdTest(OldestDatePluginTestCase):
         task = self.singleton_task()
         self.plugin._import_task_choice(task, None)
         input_options.assert_called_once_with(('Use this recording', 'Try again', 'Skip track'))
-        self.assertEqual(Action.SKIP, task.choice_flag)
+        self.assertEqual(action.SKIP, task.choice_flag)
 
     @patch('beets.ui.input_options', return_value='u')
     def test_use_recording(self, input_options):
@@ -684,7 +740,7 @@ class MissingWorkIdTest(OldestDatePluginTestCase):
         task = self.album_task(albumtypes=['album', 'live'])
         self.plugin._import_task_choice(task, None)
         input_options.assert_called_once_with(('Use this recording', 'Try again', 'Skip album'))
-        self.assertEqual(Action.SKIP, task.choice_flag)
+        self.assertEqual(action.SKIP, task.choice_flag)
 
     @patch('beets.ui.input_options', return_value='s')
     def test_compilation_prompted_for_work(self, input_options):

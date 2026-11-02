@@ -13,6 +13,11 @@ from beets.importer import ImportTask, ImportSession
 from beets.library import Item, Library
 from beets.plugins import BeetsPlugin
 
+try:
+    from beets.autotag.distance import Distance
+except ImportError:  # beets < 2.4
+    from beets.autotag.hooks import Distance  # type: ignore[no-redef,attr-defined,unused-ignore]
+
 action: Any = getattr(importer, 'Action', None)
 if action is None:
     action = getattr(importer, 'action')
@@ -101,6 +106,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
             'max_scan_seconds': 120,  # Time budget per track, then keep oldest date found so far. 0: no limit
             'max_related_recordings': 200,  # Work approach: scan at most N related recordings. 0: no limit
             'minimum_file_year': 1000,  # Embedded years below this (0, blank, absurd) are treated as unknown
+            'write': False,  # Also write the release_date_backup flexible attribute to file tags
         })
 
         self._recordings_cache: Dict[str, Recording] = dict()
@@ -126,12 +132,27 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
                 'recording_year',
                 'recording_month',
                 'recording_day'):
-            field = mediafile.MediaField(
-                mediafile.MP3DescStorageStyle(recording_field),
-                mediafile.MP4StorageStyle('----:com.apple.iTunes:{}'.format(
-                    recording_field)),
-                mediafile.StorageStyle(recording_field))
-            self.add_media_field(recording_field, field)
+            self.add_media_field(recording_field, self._media_field(recording_field))
+
+        # Only registered when enabled: once registered, reading a file without this tag
+        # (e.g. `beet update`) would reset the backup stored in the library
+        if self.config['write'].get(bool):
+            self.add_media_field('release_date_backup', self._media_field('release_date_backup', float))
+            self.register_listener('write', self._on_write)
+
+    @staticmethod
+    def _media_field(name: str, out_type: type = str) -> mediafile.MediaField:
+        return mediafile.MediaField(
+            mediafile.MP3DescStorageStyle(name),
+            mediafile.MP4StorageStyle('----:com.apple.iTunes:{}'.format(name)),
+            mediafile.StorageStyle(name),
+            out_type=out_type)
+
+    @staticmethod
+    def _on_write(item: Item, path: bytes, tags: Dict[str, Any]) -> None:
+        # Clear a stale tag when the backup was removed from the library
+        if item.get('release_date_backup') is None:
+            tags['release_date_backup'] = None
 
     def commands(self) -> List[ui.Subcommand]:
         recording_date_command = ui.Subcommand(
@@ -194,7 +215,7 @@ class OldestDatePlugin(BeetsPlugin):  # type: ignore
                 if track.get('data_source', 'MusicBrainz') != 'MusicBrainz' or not track.get('track_id'):
                     continue
                 if not self._prompt_missing_work_id(track, skip_option):
-                    task.choice_flag = Action.SKIP
+                    task.choice_flag = action.SKIP
                     return
         except mb_api.MusicBrainzError as e:
             self._log.error('Could not check work for {0}: {1}', task, e)

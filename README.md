@@ -61,6 +61,7 @@ and `recordings` of `recording`, `works` of `work`.
 | max_scan_seconds | 120 | Time budget per track. When reached, the oldest valid date found so far is kept; the track is skipped only if no date was found. `0` disables the limit |
 | max_related_recordings | 200 | Work approach: scan at most this many related recordings of a work (large works are scanned partially instead of being skipped) |
 | minimum_file_year | 1000 | Embedded file years that are missing, zero or older than this are treated as unknown (never written back as `0001`) |
+| write | False | Also write the `release_date_backup` flexible attribute to the file tags (see [Writing the backup to file tags](#writing-the-backup-to-file-tags)) |
 
 The MusicBrainz server, `https` and rate limit settings are taken from beets' `musicbrainz` configuration.
 
@@ -103,6 +104,18 @@ its numeric null value (the Unix epoch), so migrate before relying on date-typed
 Save a copy of your library first. Do not force another
 overwrite merely to migrate: it replaces the backup with the item's *current* date. Legacy text values
 are skipped with a warning by `--restore` when they have not already been coerced by DateType.
+
+### Writing the backup to file tags
+
+By default `release_date_backup` only lives in the beets library. With `write: yes`, it is also written
+to the file tags whenever beets writes the item (import with `import.write`, `beet oldestdate`, `beet write`,
+`--restore`...), as the same numeric timestamp in a `release_date_backup` tag (ID3 `TXXX`, MP4 freeform
+`----:com.apple.iTunes:release_date_backup`, Vorbis comment...). The tag is read back on import and
+`beet update`, so the backup survives re-importing the files. When the backup is removed from the library
+(zero year), the tag is removed from the file too.
+
+After enabling it on an existing library, run `beet write` before `beet update` so that files get the tag:
+reading a file without it resets the library backup. Changing this option requires restarting beets.
 
 ## Skipped tracks
 
